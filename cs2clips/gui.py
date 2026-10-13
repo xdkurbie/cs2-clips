@@ -11,6 +11,13 @@ from .detect import detect_highlights, per_player
 from .rules import load_rules
 from .record import make_cfg, cs2_launch_args, check_offline_safety, ffmpeg_gdigrab_cmd, clip_seconds, is_cs2_running
 from .montage import build_montage_cmd
+from .record import wait_for_cs2
+
+try:
+    from tkinterdnd2 import TkinterDnD, DND_FILES
+    _Base = TkinterDnD.Tk
+except Exception:  # tkinterdnd2 missing or tkdnd binary not loadable
+    _Base, DND_FILES = tk.Tk, None
 
 T = {
     "no": {"open": "Åpne demo…", "folder": "Replays-mappe…", "player": "Spiller (SteamID/navn):", "scan": "Finn høydepunkter",
@@ -22,7 +29,7 @@ T = {
 }
 
 
-class App(tk.Tk):
+class App(_Base):
     def __init__(self):
         super().__init__()
         self.s = Settings.load()
@@ -32,12 +39,18 @@ class App(tk.Tk):
         self.hl = []
         self.clips: list[Path] = []
         self._build()
-        try:
-            self.drop_target_register("DND_Files")  # works when tkinterdnd2 is available
-            self.dnd_bind("<<Drop>>", lambda e: self.set_demo(Path(e.data.strip("{}"))))
-        except Exception:
-            pass
+        if DND_FILES:
+            try:
+                self.drop_target_register(DND_FILES)
+                self.dnd_bind("<<Drop>>", self._on_drop)
+            except Exception:
+                pass
         self.refresh_demos()
+
+    def _on_drop(self, e):
+        files = [Path(f) for f in self.tk.splitlist(e.data) if f.lower().endswith(".dem")]
+        if files:
+            self.set_demo(files[0])
 
     def t(self, k): return T[self.s.language][k]
 
@@ -136,7 +149,9 @@ class App(tk.Tk):
             check_offline_safety(args)
             subprocess.Popen(args)
             self.after(0, lambda n=n: self.status.set(f"REC {n+1}/{len(items)} – wait for CS2…"))
-            time.sleep(45)  # CS2 start + demo load + seek
+            if not wait_for_cs2(timeout_s=120, settle_s=15):
+                self.after(0, lambda: messagebox.showerror("CS2", "CS2 did not start within 120 s"))
+                return
             out = out_dir / f"{self.demo.stem}_r{h.round}_{h.kind.replace(' ', '')}_{n}.mp4"
             secs = clip_seconds(h)
             if self.s.capture == "obs":

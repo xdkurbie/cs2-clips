@@ -131,3 +131,21 @@ def test_montage_runs_with_ffmpeg(tmp_path):
     out = tmp_path / "out.mp4"
     subprocess.run(build_montage_cmd(clips, [2, 2], out, music=music, slowmo=0.5) + ["-loglevel", "error"], check=True)
     assert out.stat().st_size > 1000
+
+
+def _fake_clock():
+    t = [0.0]
+    return t, (lambda: t[0]), (lambda s: t.__setitem__(0, t[0] + s))
+
+
+def test_wait_for_cs2_polls_until_found():
+    from cs2clips.record import wait_for_cs2
+    t, clock, sleep = _fake_clock()
+    assert wait_for_cs2(60, settle_s=10, check=lambda: t[0] >= 5, sleep=sleep, clock=clock)
+    assert t[0] == 15
+
+
+def test_wait_for_cs2_times_out():
+    from cs2clips.record import wait_for_cs2
+    t, clock, sleep = _fake_clock()
+    assert not wait_for_cs2(30, check=lambda: False, sleep=sleep, clock=clock) and t[0] >= 30

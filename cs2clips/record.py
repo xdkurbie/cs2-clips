@@ -1,6 +1,6 @@
 """Recording via CS2's own offline demo player (no injection, no HLAE)."""
 from __future__ import annotations
-import subprocess
+import subprocess, time
 from dataclasses import dataclass
 from pathlib import Path
 from .detect import Highlight
@@ -75,3 +75,25 @@ class ObsRecorder:
 
     def stop(self) -> str:
         return self.cl.stop_record().output_path
+
+
+def is_cs2_window_open() -> bool:
+    """True if a visible window titled 'Counter-Strike 2' exists (Windows only)."""
+    try:
+        import ctypes
+        return bool(ctypes.windll.user32.FindWindowW(None, "Counter-Strike 2"))
+    except Exception:
+        return is_cs2_running()
+
+
+def wait_for_cs2(timeout_s: float = 120, settle_s: float = 15, poll_s: float = 1.0,
+                 check=None, sleep=time.sleep, clock=time.monotonic) -> bool:
+    """Poll until the CS2 window/process appears, then wait settle_s for demo load + seek."""
+    check = check or is_cs2_window_open
+    end = clock() + timeout_s
+    while clock() < end:
+        if check():
+            sleep(settle_s)
+            return True
+        sleep(poll_s)
+    return False

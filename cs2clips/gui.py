@@ -12,6 +12,10 @@ from .rules import load_rules
 from .record import make_cfg, cs2_launch_args, check_offline_safety, ffmpeg_gdigrab_cmd, clip_seconds, is_cs2_running
 from .montage import build_montage_cmd
 from .record import wait_for_cs2
+from tkinter import simpledialog
+from .config import config_dir
+from .secretstore import SecretStore, SecretStoreUnavailable, mask, SECRET_KEYS
+from .matches import fetch_new_matches, PasteUrlResolver, download_demo
 
 try:
     from tkinterdnd2 import TkinterDnD, DND_FILES
@@ -22,10 +26,10 @@ except Exception:  # tkinterdnd2 missing or tkdnd binary not loadable
 T = {
     "no": {"open": "Åpne demo…", "folder": "Replays-mappe…", "player": "Spiller (SteamID/navn):", "scan": "Finn høydepunkter",
            "record": "Ta opp valgte", "montage": "Lag montasje", "warn": "CS2 kjører allerede. Lukk spillet først – appen starter CS2 selv i offline demo-modus (-insecure).",
-           "none": "Ingen høydepunkter funnet.", "done": "Ferdig", "lang": "English"},
+           "none": "Ingen høydepunkter funnet.", "fetch": "Hent nye kamper", "paste": "Lim inn demo-URL", "done": "Ferdig", "lang": "English"},
     "en": {"open": "Open demo…", "folder": "Replays folder…", "player": "Player (SteamID/name):", "scan": "Find highlights",
            "record": "Record selected", "montage": "Build montage", "warn": "CS2 is already running. Close the game first – the app launches CS2 itself in offline demo mode (-insecure).",
-           "none": "No highlights found.", "done": "Done", "lang": "Norsk"},
+           "none": "No highlights found.", "fetch": "Fetch new matches", "paste": "Paste demo URL", "done": "Done", "lang": "Norsk"},
 }
 
 
@@ -72,6 +76,9 @@ class App(_Base):
         ttk.Button(bot, text=self.t("scan"), command=self.scan).pack(side="left")
         ttk.Button(bot, text=self.t("record"), command=self.record).pack(side="left", padx=4)
         ttk.Button(bot, text=self.t("montage"), command=self.montage).pack(side="left")
+        ttk.Button(bot, text="Steam…", command=self.steam_settings).pack(side="left", padx=4)
+        ttk.Button(bot, text=self.t("fetch"), command=self.fetch_matches).pack(side="left")
+        ttk.Button(bot, text=self.t("paste"), command=self.paste_url).pack(side="left", padx=4)
         self.status = tk.StringVar(); ttk.Label(bot, textvariable=self.status).pack(side="right")
 
     def toggle_lang(self):
@@ -127,6 +134,54 @@ class App(_Base):
 
     def selected(self):
         return [self.hl[int(i)] for i in self.tree.selection() if i.isdigit()]
+
+    def store(self):
+        try:
+            return SecretStore(config_dir() / "secrets.json")
+        except SecretStoreUnavailable as e:
+            messagebox.showerror("Steam", str(e)); return None
+
+    def steam_settings(self):
+        st = self.store()
+        if not st: return
+        win = tk.Toplevel(self); win.title("Steam")
+        labels = {"steam_api_key": "Steam Web API key", "steamid64": "SteamID64",
+                  "auth_code": "Game Authentication Code", "last_sharecode": "Latest share code (CSGO-…)"}
+        vars_ = {}
+        for r, k in enumerate(SECRET_KEYS):
+            ttk.Label(win, text=labels[k]).grid(row=r, column=0, sticky="w", padx=6, pady=3)
+            v = tk.StringVar(); vars_[k] = v
+            ttk.Entry(win, textvariable=v, show="•", width=44).grid(row=r, column=1, padx=6)
+            ttk.Label(win, text=mask(st.get(k))).grid(row=r, column=2, padx=6)  # masked current value
+        def save():
+            for k, v in vars_.items():
+                if v.get().strip(): st.set(k, v.get().strip())
+            win.destroy()
+        ttk.Button(win, text="OK", command=save).grid(row=len(SECRET_KEYS), column=1, pady=6)
+
+    def _after_download(self, p):
+        self.after(0, lambda: (self.refresh_demos(), self.set_demo(p), self.scan()))
+
+    def fetch_matches(self):
+        st = self.store()
+        if not st: return
+        def ask(prompt):
+            res = {}
+            ev = threading.Event()
+            self.after(0, lambda: (res.setdefault("v", simpledialog.askstring("Demo", prompt, parent=self)), ev.set()))
+            ev.wait(); return res.get("v")
+        def work():
+            try:
+                demos = fetch_new_matches(st, PasteUrlResolver(ask), self.folder or Path.home() / "cs2-replays", self._after_download)
+                self.after(0, lambda: self.status.set(f"{len(demos)} new demo(s)"))
+            except Exception as e:
+                self.after(0, lambda e=e: messagebox.showerror("Steam", str(e)))
+        threading.Thread(target=work, daemon=True).start()
+
+    def paste_url(self):
+        url = simpledialog.askstring("Demo", "Demo URL (.dem / .dem.bz2):", parent=self)
+        if not url: return
+        threading.Thread(target=lambda: self._after_download(download_demo(url.strip(), self.folder or Path.home() / "cs2-replays")), daemon=True).start()
 
     def cfg_dir(self) -> Path:
         if self.s.cs2_cfg_dir: return Path(self.s.cs2_cfg_dir)

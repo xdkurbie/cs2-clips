@@ -1,0 +1,11 @@
+multikill_window_s: 0      # 0 = whole round; e.g. 10 = kills must chain within 10 s
+min_multikill: 2
+detect_clutches: true
+min_clutch_enemies: 2
+detect_headshots: false
+detect_wallbangs: true
+detect_noscopes: true
+pre_roll_s: 4
+post_roll_s: 2
+min_score: 15
+scores: {ace: 120}

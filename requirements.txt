@@ -1,0 +1,5 @@
+demoparser2>=0.30
+pandas>=2.0
+pyyaml>=6.0
+obsws-python>=1.7
+tkinterdnd2>=0.4

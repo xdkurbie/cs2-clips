@@ -8,6 +8,9 @@ DEFAULT_SCORES = {"2k": 20, "3k": 40, "4k": 70, "5k": 100, "ace": 100, "clutch":
                   "clutch_per_enemy": 15, "headshot": 3, "wallbang": 15, "noscope": 20}
 
 
+SELECTIVITY = {"low": 0, "medium": 20, "high": 60}
+
+
 @dataclass
 class Rules:
     multikill_window_s: float = 0.0     # 0 = whole round counts; >0 = kills must chain within this many seconds
@@ -21,6 +24,7 @@ class Rules:
     post_roll_s: float = 2.0
     min_score: int = 0
     tickrate: int = 64
+    selectivity: str = ""                # "", "low", "medium", "high" – overrides min_score when set
     scores: dict = field(default_factory=lambda: dict(DEFAULT_SCORES))
 
     def validate(self) -> "Rules":
@@ -32,6 +36,10 @@ class Rules:
             raise ValueError("tickrate must be > 0")
         if not 1 <= self.min_clutch_enemies <= 5:
             raise ValueError("min_clutch_enemies must be 1..5")
+        if self.selectivity:
+            if self.selectivity not in SELECTIVITY:
+                raise ValueError("selectivity must be low/medium/high")
+            self.min_score = SELECTIVITY[self.selectivity]
         return self
 
     def to_dict(self) -> dict:

@@ -23,10 +23,48 @@ class Highlight:
     score: int
     tags: list = field(default_factory=list)
 
+    weapon: str = ""
+    map_name: str = ""
+
+    @property
+    def title(self) -> str:
+        """e.g. 'Mirage AK-47 1v2 3K Clutch'."""
+        parts = [self.map_name.replace("de_", "").title(), pretty_weapon(self.weapon)]
+        k = self.kind
+        if k.startswith("clutch"):
+            sit = k.split()[1]
+            parts += [sit] + ([f"{self.kills}K"] if self.kills >= 2 else []) + ["Clutch"]
+        elif k == "ace":
+            parts.append("Ace")
+        elif k.endswith("k"):
+            parts.append(k.upper())
+        else:
+            parts.append(k.title())
+        return " ".join(p for p in parts if p)
+
+    @property
+    def chips(self) -> list[str]:
+        c = []
+        if self.kills >= 2:
+            c.append(f"{self.kills} KILLS")
+        if self.kind.startswith("clutch"):
+            c.append(self.kind.split()[1].upper() + " CLUTCH")
+        c += [t.upper() for t in self.tags if t and t.upper() not in c]
+        return c
+
     @property
     def label(self) -> str:
         t = f" ({', '.join(self.tags)})" if self.tags else ""
-        return f"R{self.round} {self.kind}{t} – {self.name}"
+        return f"R{self.round} {self.title}{t}"
+
+
+WEAPONS = {"ak47": "AK-47", "m4a1": "M4A4", "m4a1_silencer": "M4A1-S", "awp": "AWP", "deagle": "Desert Eagle",
+           "galilar": "Galil AR", "usp_silencer": "USP-S", "glock": "Glock-18", "ssg08": "SSG 08", "famas": "FAMAS"}
+
+
+def pretty_weapon(w: str) -> str:
+    w = (w or "").replace("weapon_", "")
+    return WEAPONS.get(w, w.upper() if len(w) <= 4 else w.title())
 
 
 def _sid(x) -> str:
@@ -91,8 +129,9 @@ def detect_highlights(kills: pd.DataFrame, rounds: pd.DataFrame | None = None,
                 if sub["headshot"].astype(bool).all():
                     tags.append("all HS")
                 s, e = _clip(rules, chain[0], chain[-1])
+                wpn = str(sub["weapon"].mode().iloc[0]) if "weapon" in sub and not sub["weapon"].dropna().empty else ""
                 hl.append(Highlight(kind, int(rnd), sid, name, s, e, n,
-                                    int(sc.get(kind, 0) + 2 * int(sub["headshot"].astype(bool).sum())), tags))
+                                    int(sc.get(kind, 0) + 2 * int(sub["headshot"].astype(bool).sum())), tags, wpn))
         for _, row in g.iterrows():
             tags = []
             if rules.detect_noscopes and bool(row["noscope"]):
@@ -104,11 +143,12 @@ def detect_highlights(kills: pd.DataFrame, rounds: pd.DataFrame | None = None,
             if tags:
                 s, e = _clip(rules, int(row["tick"]), int(row["tick"]))
                 hl.append(Highlight(tags[0], int(rnd), sid, name, s, e, 1,
-                                    int(sum(sc.get(t, 0) for t in tags)), tags[1:] + ([str(row.get("weapon", ""))] if row.get("weapon") else [])))
+                                    int(sum(sc.get(t, 0) for t in tags)), tags[1:], str(row.get("weapon", "") or "")))
 
     if rules.detect_clutches and rounds is not None and roster is not None and not roster.empty:
         hl += _clutches(k, rounds, roster, rules)
 
+    hl = _merge_clutch_multikills(hl)
     if player:
         p = player.lower()
         hl = [h for h in hl if h.steamid == player or h.name.lower() == p]  # SteamID or case-insensitive name
@@ -144,6 +184,26 @@ def _clutches(k, rounds, roster, rules) -> list[Highlight]:
                                  int((rk[rk["tick"] > t0]["attacker_steamid"] == sid).sum()),
                                  int(sc["clutch"] + sc["clutch_per_enemy"] * n)))
     return out
+
+
+def _merge_clutch_multikills(hl: list[Highlight]) -> list[Highlight]:
+    """Fold a multikill/ace into the clutch of the same player+round (one clip, combined score)."""
+    out, drop = [], set()
+    for c in hl:
+        if not c.kind.startswith("clutch"):
+            continue
+        for i, m in enumerate(hl):
+            if m.round == c.round and m.steamid == c.steamid and (m.kind.endswith("k") or m.kind == "ace"):
+                c.kills = max(c.kills, m.kills); c.score += m.score; c.weapon = c.weapon or m.weapon
+                c.start_tick = min(c.start_tick, m.start_tick); c.end_tick = max(c.end_tick, m.end_tick)
+                c.tags = list(dict.fromkeys(c.tags + m.tags)); drop.add(i)
+    return [h for i, h in enumerate(hl) if i not in drop]
+
+
+def set_map(hl: list[Highlight], map_name: str) -> list[Highlight]:
+    for h in hl:
+        h.map_name = map_name or ""
+    return hl
 
 
 def per_player(hl: list[Highlight]) -> dict[str, list[Highlight]]:

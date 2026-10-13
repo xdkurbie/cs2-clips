@@ -28,6 +28,8 @@ class Settings:
     music: str = ""
     slowmo: float = 1.0
     language: str = "no"
+    onboarded: bool = False
+    selectivity: str = "medium"
 
     @classmethod
     def load(cls, path: Path | None = None) -> "Settings":

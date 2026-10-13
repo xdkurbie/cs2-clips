@@ -149,3 +149,20 @@ def test_wait_for_cs2_times_out():
     from cs2clips.record import wait_for_cs2
     t, clock, sleep = _fake_clock()
     assert not wait_for_cs2(30, check=lambda: False, sleep=sleep, clock=clock) and t[0] >= 30
+
+
+def test_title_chips_and_clutch_merge():
+    from cs2clips.detect import set_map
+    k = [kill(100 + i, 3, T_[0], CT[i + 1]) for i in range(2)] + [kill(110, 3, T_[1], CT[3]), kill(120, 3, T_[3], CT[4])]
+    k += [kill(200 + i * 64, 3, A, T_[i], hs=True, w="galilar") for i in range(5)]
+    rounds = pd.DataFrame([dict(round=3, start_tick=0, end_tick=1000, winner=3)])
+    hl = set_map(detect_highlights(pd.DataFrame(k), rounds, roster(3), player=A), "de_dust2")
+    assert [h.kind for h in hl] == ["clutch 1v5"]  # ace merged into clutch
+    h = hl[0]
+    assert h.title == "Dust2 Galil AR 1v5 5K Clutch"
+    assert h.chips[:2] == ["5 KILLS", "1V5 CLUTCH"] and "ALL HS" in h.chips
+
+
+def test_selectivity_presets():
+    assert rules_from_dict({"selectivity": "high"}).min_score == 60
+    with pytest.raises(ValueError): rules_from_dict({"selectivity": "extreme"})

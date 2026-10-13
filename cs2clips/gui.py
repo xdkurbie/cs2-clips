@@ -7,7 +7,8 @@ from tkinter import filedialog, messagebox, ttk
 from . import __version__
 from .config import Settings
 from .demo import find_replays_dir, list_demos, load_demo
-from .detect import detect_highlights, per_player
+from .detect import detect_highlights, per_player, set_map
+import webbrowser
 from .rules import load_rules
 from .record import make_cfg, cs2_launch_args, check_offline_safety, ffmpeg_gdigrab_cmd, clip_seconds, is_cs2_running
 from .montage import build_montage_cmd
@@ -50,6 +51,27 @@ class App(_Base):
             except Exception:
                 pass
         self.refresh_demos()
+        if not self.s.onboarded:
+            self.after(300, self.onboarding)
+
+    def onboarding(self):
+        no = self.s.language == "no"
+        w = tk.Toplevel(self); w.title("Kom i gang" if no else "Getting started")
+        steps = [
+            ("1. Spillernavn" if no else "1. Player name", f"{self.s.player_name}", None),
+            ("2. Replays-mappe" if no else "2. Replays folder", str(self.folder or "?"), self.pick_folder),
+            ("3. (Valgfritt) Steam-nedlasting" if no else "3. (Optional) Steam download", "API key / auth code", self.steam_settings),
+        ]
+        for r, (a, b, cmd) in enumerate(steps):
+            ttk.Label(w, text=a, font=("", 10, "bold")).grid(row=r, column=0, sticky="w", padx=8, pady=4)
+            ttk.Label(w, text=b).grid(row=r, column=1, sticky="w")
+            if cmd: ttk.Button(w, text="…", command=cmd).grid(row=r, column=2, padx=6)
+        ttk.Button(w, text="Steam API key ↗", command=lambda: webbrowser.open("https://steamcommunity.com/dev/apikey")).grid(row=3, column=0, pady=6)
+        ttk.Button(w, text="Auth code ↗", command=lambda: webbrowser.open(
+            "https://help.steampowered.com/en/wizard/HelpWithGameIssue/?appid=730&issueid=128")).grid(row=3, column=1)
+        def done():
+            self.s.onboarded = True; self.s.save(); w.destroy()
+        ttk.Button(w, text="Ferdig" if no else "Done", command=done).grid(row=4, column=1, pady=8)
 
     def _on_drop(self, e):
         files = [Path(f) for f in self.tk.splitlist(e.data) if f.lower().endswith(".dem")]
@@ -115,10 +137,14 @@ class App(_Base):
         self.status.set("…")
         def work():
             try:
-                kills, rounds, roster, _ = load_demo(self.demo)
+                kills, rounds, roster, header = load_demo(self.demo)
                 if self.s.resolve_player(roster) or self.s.resolve_player(kills):
                     self.s.save()
-                self.hl = detect_highlights(kills, rounds, roster, load_rules(self.s.rules_file or None), self.s.player or None)
+                rules = load_rules(self.s.rules_file or None)
+                if not self.s.rules_file and self.s.selectivity:
+                    rules.selectivity = self.s.selectivity; rules.validate()
+                self.hl = detect_highlights(kills, rounds, roster, rules, self.s.player or None)
+                set_map(self.hl, header.get("map_name", ""))
                 self.after(0, self._show)
             except Exception as e:
                 self.after(0, lambda: messagebox.showerror("Error", str(e)))
@@ -130,6 +156,7 @@ class App(_Base):
             node = self.tree.insert("", "end", text=pl, open=True)
             for h in items:
                 self.tree.insert(node, "end", iid=str(self.hl.index(h)), text=h.label, values=(h.score,))
+                self.tree.item(str(self.hl.index(h)), text=f"{h.label}   [{' · '.join(h.chips)}]")
         self.status.set(f"{len(self.hl)}" if self.hl else self.t("none"))
 
     def selected(self):

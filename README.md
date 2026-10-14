@@ -1,6 +1,4 @@
 <p align="center"><img src="assets/icon-256.png" width="96" alt="CS2 Clips logo"></p>
-
-🌐 **Website:** https://xdkurbie.github.io/cs2-clips/ (built in Rust with Leptos + WebAssembly, source in [`site/`](site/))
 <h1 align="center">CS2 Clips</h1>
 
 <p align="center">🌐 <b>Website:</b> <a href="https://xdkurbie.github.io/cs2-clips/">xdkurbie.github.io/cs2-clips</a> — built in Rust (Leptos + WebAssembly), source in <a href="site/">site/</a></p>

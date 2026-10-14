@@ -1,0 +1,23 @@
+[package]
+name = "cs2clips-gui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+build = "build.rs"
+
+[[bin]]
+name = "CS2Clips"
+path = "src/main.rs"
+
+[dependencies]
+cs2clips-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+eframe = { version = "0.36", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+rfd = "0.15"
+open = "5"
+
+[build-dependencies]
+winresource = "0.1"

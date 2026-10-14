@@ -1,0 +1,110 @@
+name: ci
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+permissions:
+  contents: write
+env:
+  CARGO_TERM_COLOR: always
+  TEST_DEMO_URL: https://github.com/LaihoE/demoparser/raw/main/src/parser/test_demo.dem
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { components: "clippy, rustfmt" }
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libxkbcommon-dev ffmpeg
+      - name: Fetch public CS2 test demo
+        uses: actions/cache@v4
+        with: { path: test_demo.dem, key: cs2-test-demo-v1 }
+      - run: test -f test_demo.dem || curl -sSfL -o test_demo.dem "$TEST_DEMO_URL"
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+        env: { CS2CLIPS_TEST_DEMO: "${{ github.workspace }}/test_demo.dem" }
+
+  windows:
+    needs: check
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --release
+      - run: cargo build --release -p cs2clips-gui -p cs2clips-cli
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory dist | Out-Null
+          Copy-Item target/release/CS2Clips.exe dist/CS2Clips-windows-x64.exe
+          New-Item -ItemType Directory pkg | Out-Null
+          Copy-Item target/release/CS2Clips.exe, target/release/cs2clips.exe, README.md, LICENSE, rules.example.yaml pkg/
+          Compress-Archive -Path pkg/* -DestinationPath dist/CS2Clips-windows-x64.zip
+      - uses: actions/upload-artifact@v4
+        with: { name: windows, path: dist/* }
+
+  macos:
+    needs: check
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: "aarch64-apple-darwin,x86_64-apple-darwin" }
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --release
+      - run: |
+          cargo build --release --target aarch64-apple-darwin -p cs2clips-gui -p cs2clips-cli
+          cargo build --release --target x86_64-apple-darwin -p cs2clips-gui -p cs2clips-cli
+      - name: Universal .app bundle
+        run: |
+          set -e
+          APP="dist/CS2 Clips.app"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          lipo -create -output "$APP/Contents/MacOS/CS2Clips" target/aarch64-apple-darwin/release/CS2Clips target/x86_64-apple-darwin/release/CS2Clips
+          lipo -create -output dist/cs2clips target/aarch64-apple-darwin/release/cs2clips target/x86_64-apple-darwin/release/cs2clips
+          mkdir icon.iconset
+          for s in 16 32 64 128 256 512; do sips -z $s $s assets/icon.png --out icon.iconset/icon_${s}x${s}.png >/dev/null; done
+          iconutil -c icns icon.iconset -o "$APP/Contents/Resources/icon.icns"
+          VER=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          cat > "$APP/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>CFBundleName</key><string>CS2 Clips</string>
+            <key>CFBundleDisplayName</key><string>CS2 Clips</string>
+            <key>CFBundleIdentifier</key><string>dev.xdkurbie.cs2clips</string>
+            <key>CFBundleExecutable</key><string>CS2Clips</string>
+            <key>CFBundleIconFile</key><string>icon</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>$VER</string>
+            <key>CFBundleVersion</key><string>$VER</string>
+            <key>LSMinimumSystemVersion</key><string>11.0</string>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict></plist>
+          PLIST
+          codesign --force --deep -s - "$APP"
+          cd dist && ditto -c -k --keepParent "CS2 Clips.app" CS2Clips-macos-universal.zip && tar czf cs2clips-cli-macos-universal.tar.gz cs2clips && rm -rf "CS2 Clips.app" cs2clips
+      - uses: actions/upload-artifact@v4
+        with: { name: macos, path: dist/* }
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: dist, merge-multiple: true }
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          draft: false
+          body: |
+            CS2 Clips rewritten in Rust. See the README for setup and what is tested.
+            * **Windows x64**: `CS2Clips-windows-x64.exe` (GUI) or the zip (GUI + `cs2clips` CLI).
+            * **macOS (Apple silicon + Intel)**: `CS2Clips-macos-universal.zip`. The app is ad-hoc signed, not notarized: right-click → Open the first time.
+            Recording through CS2 demo playback is Windows-only and has not been tested end-to-end yet.

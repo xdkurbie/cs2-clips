@@ -1,11 +1,20 @@
+# CS2 Clips highlight rules. Every key is optional; unknown keys are rejected.
 multikill_window_s: 0      # 0 = whole round; e.g. 10 = kills must chain within 10 s
-min_multikill: 2
+min_multikill: 2           # 2..5
 detect_clutches: true
-min_clutch_enemies: 2
-detect_headshots: false
+min_clutch_enemies: 2      # 1v2 or harder
+detect_headshots: false    # single headshots are noisy
 detect_wallbangs: true
 detect_noscopes: true
+detect_smoke_kills: true
 pre_roll_s: 4
 post_roll_s: 2
+selectivity: medium        # low | medium | high | custom (custom uses min_score)
 min_score: 15
-scores: {ace: 120}
+merge_gap_s: 1
+scores:
+  ace: 120
+  clutch_per_enemy: 20
+weapon_bonus:
+  knife: 40
+  taser: 30

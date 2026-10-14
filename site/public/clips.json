@@ -1,0 +1,15 @@
+{
+ "note": "SAMPLE DATA. Real clips are added by opening a PR that appends to this file (video = YouTube id or GitHub release asset URL).",
+ "players": [
+  {"id":"rasu420","name":"rasu420","steam":"","bio":"Creator of CS2 Clips. Sample profile.","sample":true},
+  {"id":"demo_player","name":"demo_player","steam":"","bio":"Fictional demo account.","sample":true}
+ ],
+ "clips": [
+  {"id":"ace-mirage-a","title":"Ace on A site retake","player":"rasu420","map":"Mirage","tags":["ace","retake"],"kills":5,"weapon":"AK-47","round":17,"date":"2026-10-12","youtube":"","video":"","sample":true},
+  {"id":"clutch-1v3-inferno","title":"1v3 clutch in banana","player":"rasu420","map":"Inferno","tags":["clutch","1v3"],"kills":3,"weapon":"M4A1-S","round":22,"date":"2026-10-11","youtube":"","video":"","sample":true},
+  {"id":"noscope-dust2","title":"Mid-doors noscope","player":"demo_player","map":"Dust II","tags":["noscope","awp"],"kills":1,"weapon":"AWP","round":4,"date":"2026-10-10","youtube":"","video":"","sample":true},
+  {"id":"4k-ancient","title":"4K through smoke","player":"demo_player","map":"Ancient","tags":["4k","smoke"],"kills":4,"weapon":"AK-47","round":9,"date":"2026-10-09","youtube":"","video":"","sample":true},
+  {"id":"deagle-nuke","title":"Deagle eco triple","player":"rasu420","map":"Nuke","tags":["3k","eco"],"kills":3,"weapon":"Desert Eagle","round":2,"date":"2026-10-08","youtube":"","video":"","sample":true},
+  {"id":"entry-anubis","title":"Double entry on B","player":"demo_player","map":"Anubis","tags":["2k","entry"],"kills":2,"weapon":"Galil AR","round":13,"date":"2026-10-07","youtube":"","video":"","sample":true}
+ ]
+}

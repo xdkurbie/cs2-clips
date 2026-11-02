@@ -1,9 +1,27 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 import { highlightsFor } from "./highlights.js";
 import { buildBlockout } from "../../shared/blockout.js";
+
+async function pruneEphemeral(dataDir) {
+  const ephemeral = dataDir.startsWith("/tmp") || dataDir.startsWith(os.tmpdir());
+  if (!ephemeral) return;
+  const index = JSON.parse(await fs.readFile(path.join(dataDir, "index.json"), "utf8").catch(() => "{\"matches\":[]}"));
+  const keep = new Set((index.matches || []).slice(0, 6).map((m) => m.id));
+  const names = await fs.readdir(dataDir).catch(() => []);
+  for (const name of names) {
+    if (!/^[a-f0-9]{16}$/.test(name) || keep.has(name)) continue;
+    await fs.rm(path.join(dataDir, name), { recursive: true, force: true });
+  }
+  if ((index.matches || []).length > 6) {
+    index.matches = index.matches.filter((m) => keep.has(m.id));
+    const file = path.join(dataDir, "index.json");
+    await fs.writeFile(file, JSON.stringify(index));
+  }
+}
 
 export function createStore(dataDir, parserScript) {
   const python = process.env.PYTHON || "python3";
@@ -136,6 +154,7 @@ export function createStore(dataDir, parserScript) {
         });
         index.matches = index.matches.slice(0, 50);
         await writeIndex(index);
+        await pruneEphemeral(dataDir);
         return { meta, highlights };
       } catch (err) {
         await fs.rm(dir, { recursive: true, force: true }).catch(() => {});

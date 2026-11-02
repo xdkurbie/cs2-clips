@@ -1,14 +1,34 @@
-export async function getJSON(url) {
-  const res = await fetch(url);
+export const API_BASE = String(import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
+export const needsBackend = import.meta.env.VITE_PAGES === "1" && !API_BASE;
+
+export function api(path) {
+  return `${API_BASE}${path}`;
+}
+
+async function read(res) {
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw Object.assign(new Error(body.error || "request"), { code: body.error || "request" });
   return body;
 }
 
+export async function getJSON(path) {
+  return read(await fetch(api(path), { credentials: "include" }));
+}
+
+export async function sendJSON(path, method, payload) {
+  return read(await fetch(api(path), {
+    method,
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: payload === undefined ? undefined : JSON.stringify(payload),
+  }));
+}
+
 export function uploadDemo(file, steamid, onProgress) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", "/api/matches/upload");
+    xhr.open("POST", api("/api/matches/upload"));
+    xhr.withCredentials = true;
     xhr.responseType = "json";
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);

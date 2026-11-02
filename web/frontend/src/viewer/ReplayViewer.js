@@ -435,7 +435,7 @@ export class ReplayViewer {
   ensureRound(n) {
     if (this.rounds.has(n)) return Promise.resolve(this.rounds.get(n));
     if (this.inflight.has(n)) return this.inflight.get(n);
-    const p = fetch(`/api/matches/${this.matchId}/rounds/${n}`)
+    const p = fetch(`${import.meta.env.VITE_API_URL || ""}/api/matches/${this.matchId}/rounds/${n}`, { credentials: "include" })
       .then((r) => { if (!r.ok) throw new Error("round"); return r.arrayBuffer(); })
       .then((buffer) => this._decode(buffer))
       .then((decoded) => {

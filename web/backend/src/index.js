@@ -9,8 +9,12 @@ import Busboy from "busboy";
 import { decode, isValid } from "./sharecode.js";
 import { SteamError, walkMatches } from "./steam.js";
 import { createStore } from "./matches.js";
-import { fetchDemoForCode, gcStatus, startGcWorker } from "./gcWorker.js";
+import { botProfile, fetchDemoForCode, gcStatus, isFriend, startGcWorker } from "./gcWorker.js";
 import { clientError, redact } from "./redact.js";
+import { clearCookieHeader, cookieHeader, encryptString, sealSession, sessionFromRequest } from "./secrets.js";
+import { fetchPlayerSummary, steamLoginUrl, verifyAssertion } from "./openid.js";
+import { openDatabaseReady, userApi } from "./db.js";
+import { startMatchPoller } from "./poller.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const webRoot = path.resolve(__dirname, "../..");
@@ -25,14 +29,27 @@ const app = express();
 app.disable("x-powered-by");
 app.use(express.json({ limit: "16kb" }));
 
+const allowedOrigins = new Set(
+  (process.env.CORS_ORIGIN || "https://xdkurbie.github.io")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean),
+);
+if (process.env.NODE_ENV !== "production") {
+  allowedOrigins.add("http://127.0.0.1:5173");
+  allowedOrigins.add("http://localhost:5173");
+}
+
 app.use((req, res, next) => {
-  const origin = process.env.CORS_ORIGIN;
-  if (origin) {
+  const origin = req.headers.origin;
+  if (origin && allowedOrigins.has(origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+    res.setHeader("Vary", "Origin");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-    res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-    if (req.method === "OPTIONS") return res.sendStatus(204);
+    res.setHeader("Access-Control-Allow-Methods", "GET,POST,DELETE,PATCH,OPTIONS");
   }
+  if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
 });
 
@@ -158,7 +175,7 @@ async function saveUpload(req) {
   return new Promise((resolve, reject) => {
     const bb = Busboy({
       headers: req.headers,
-      limits: { files: 1, fileSize: 400 * 1024 * 1024, fields: 8, fieldSize: 256 },
+      limits: { files: 1, fileSize: 384 * 1024 * 1024, fields: 8, fieldSize: 256 },
     });
     const fields = {};
     let filePath = "";
@@ -205,7 +222,12 @@ app.post("/api/matches/upload", async (req, res) => {
   try {
     saved = await saveUpload(req);
     if (!saved.filePath) return clientError(res, 400, "bad_demo");
-    const { meta, highlights } = await store.createFromDemo(saved.filePath, { steamid: saved.fields.steamid });
+    const session = sessionFromRequest(req);
+    const focus = session?.steamid || saved.fields.steamid;
+    const { meta, highlights } = await store.createFromDemo(saved.filePath, { steamid: focus });
+    if (session && users) {
+      await users.addMatch({ id: meta.id, steamid: session.steamid, map: meta.map, created: meta.created, source: "upload" });
+    }
     res.json({ match: meta, highlights });
   } catch (err) {
     const code = err?.code === "bad_demo" || err?.code === "too_large" || err?.code === "parse_failed" ? err.code : "parse_failed";
@@ -257,14 +279,140 @@ app.post("/api/mux", express.raw({ type: ["video/webm", "application/octet-strea
 });
 
 if (fs.existsSync(path.join(frontend, "index.html"))) {
-  app.use(express.static(frontend, { index: false }));
-  app.use((req, res, next) => {
-    if (req.method !== "GET" || req.path.startsWith("/api")) return next();
-    res.sendFile(path.join(frontend, "index.html"), (err) => err && next());
-  });
+  app.use("/cs2-clips", express.static(frontend, { index: "index.html" }));
+  app.get("/", (_req, res) => res.redirect("/cs2-clips/"));
 }
 
+function publicApi(req) {
+  if (process.env.PUBLIC_API_URL) return process.env.PUBLIC_API_URL.replace(/\/$/, "");
+  const proto = req.get("x-forwarded-proto") || req.protocol || "http";
+  return `${proto}://${req.get("host")}`;
+}
+
+function secureCookies() {
+  return (process.env.PUBLIC_API_URL || "").startsWith("https://") || process.env.NODE_ENV === "production";
+}
+
+function requireUser(req, res) {
+  const session = sessionFromRequest(req);
+  if (!session) {
+    clientError(res, 401, "signed_out");
+    return null;
+  }
+  return session;
+}
+
+app.get("/api/auth/steam", (req, res) => {
+  if (!process.env.SESSION_SECRET) return clientError(res, 503, "missing_session_secret");
+  const api = publicApi(req);
+  res.redirect(steamLoginUrl({ returnTo: `${api}/api/auth/steam/callback`, realm: `${api}/` }));
+});
+
+app.get("/api/auth/steam/callback", async (req, res) => {
+  try {
+    if (!process.env.SESSION_SECRET) return clientError(res, 503, "missing_session_secret");
+    const params = {};
+    for (const [key, value] of Object.entries(req.query)) params[key] = String(value);
+    const steamid = await verifyAssertion(params, async (url, body) => {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body,
+      });
+      return { status: response.status, body: await response.text() };
+    });
+    let name = steamid;
+    let avatar = "";
+    if (process.env.STEAM_WEB_API_KEY) {
+      const summary = await fetchPlayerSummary(process.env.STEAM_WEB_API_KEY, steamid, async (url) => {
+        const response = await fetch(url);
+        return { status: response.status, body: await response.text() };
+      });
+      name = summary.name;
+      avatar = summary.avatar;
+    }
+    if (users) await users.upsertProfile({ steamid, name, avatar });
+    const token = sealSession({ steamid, name, avatar }, process.env.SESSION_SECRET);
+    res.setHeader("Set-Cookie", cookieHeader(token, { secure: secureCookies() }));
+    const front = (process.env.FRONTEND_URL || "https://xdkurbie.github.io/cs2-clips").replace(/\/$/, "");
+    res.redirect(`${front}#/me`);
+  } catch {
+    clientError(res, 401, "steam_openid");
+  }
+});
+
+app.post("/api/auth/logout", (req, res) => {
+  res.setHeader("Set-Cookie", clearCookieHeader(secureCookies()));
+  res.json({ ok: true });
+});
+
+app.get("/api/me", async (req, res) => {
+  const session = requireUser(req, res);
+  if (!session) return;
+  const row = users ? await users.get(session.steamid) : null;
+  res.json({
+    steamid: session.steamid,
+    name: row?.name || session.name,
+    avatar: row?.avatar || session.avatar || "",
+    friend: isFriend(session.steamid),
+    bot: botProfile(),
+    hasCredentials: Boolean(row?.auth_enc && row?.share_enc),
+    chatNotify: Boolean(Number(row?.chat_notify)),
+  });
+});
+
+app.get("/api/me/matches", async (req, res) => {
+  const session = requireUser(req, res);
+  if (!session) return;
+  if (!users) return clientError(res, 503, "database_unavailable");
+  res.json({ matches: await users.listMatches(session.steamid) });
+});
+
+app.post("/api/me/credentials", async (req, res) => {
+  const session = requireUser(req, res);
+  if (!session) return;
+  if (!users) return clientError(res, 503, "database_unavailable");
+  const authCode = String(req.body?.authCode || "").trim();
+  const shareCode = String(req.body?.shareCode || "").trim();
+  if (!/^[A-Za-z0-9]{4}-[A-Za-z0-9]{5}-[A-Za-z0-9]{4}$/.test(authCode) || !isValid(shareCode)) {
+    return clientError(res, 400, "bad_credentials");
+  }
+  try {
+    const authEnc = encryptString(authCode, process.env.ENCRYPTION_KEY || "");
+    const shareEnc = encryptString(shareCode, process.env.ENCRYPTION_KEY || "");
+    await users.setSecrets(session.steamid, authEnc, shareEnc);
+    console.log("credentials stored");
+    res.json({ ok: true });
+  } catch (err) {
+    clientError(res, 503, err?.code === "missing_encryption_key" ? "missing_encryption_key" : "database_unavailable");
+  }
+});
+
+app.delete("/api/me/credentials", async (req, res) => {
+  const session = requireUser(req, res);
+  if (!session) return;
+  if (!users) return clientError(res, 503, "database_unavailable");
+  await users.clearSecrets(session.steamid);
+  res.json({ ok: true });
+});
+
+app.patch("/api/me", async (req, res) => {
+  const session = requireUser(req, res);
+  if (!session) return;
+  if (!users) return clientError(res, 503, "database_unavailable");
+  if (typeof req.body?.chatNotify === "boolean") await users.setChat(session.steamid, req.body.chatNotify);
+  res.json({ ok: true });
+});
+
+let users = null;
+const db = await openDatabaseReady(dataDir).catch(() => {
+  console.error("database unavailable");
+  return null;
+});
+if (db) users = userApi(db);
+
 startGcWorker();
+if (users) startMatchPoller({ db, users, store });
 app.listen(port, host, () => {
   console.log(`cs2clips listening on ${host}:${port}`);
 });

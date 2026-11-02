@@ -151,7 +151,7 @@ async function recordRealtime({ out, fps, frameCount, draw, paint }) {
   }
   rec.stop();
   const webm = await done;
-  const res = await fetch("/api/mux", { method: "POST", headers: { "Content-Type": "video/webm" }, body: webm });
+  const res = await fetch(`${import.meta.env.VITE_API_URL || ""}/api/mux`, { method: "POST", credentials: "include", headers: { "Content-Type": "video/webm" }, body: webm });
   if (!res.ok) return webm;
   return new Blob([await res.arrayBuffer()], { type: "video/mp4" });
 }

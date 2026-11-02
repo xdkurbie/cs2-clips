@@ -43,7 +43,7 @@ That serves http://127.0.0.1:8787.
 
 Share links look like `#/m/<id>?round=3&tick=12000&mode=follow`.
 
-Auth codes typed into the Steam form stay in `sessionStorage` for that tab. They are not written to disk and not logged. The API log line is only method, path and status.
+Logged-out visitors can still upload a demo. Signed-in users add the bot as a friend and save the match-history code once. The server encrypts it and never writes it to the log. The API log line is only method, path and status.
 
 ## Credentials the owner must provide
 
@@ -52,7 +52,13 @@ Nothing is required to parse an uploaded demo.
 | Variable | Why |
 |---|---|
 | `STEAM_WEB_API_KEY` | 32-character key from https://steamcommunity.com/dev/apikey. Server-side only. Walks `ICSGOPlayers_730/GetNextMatchSharingCode/v1`. |
-| SteamID64, auth code `XXXX-XXXXX-XXXX`, known share code | Typed by the user in the UI. The auth code is the one from Steam Help → Access to your match history. It is not an env var. |
+| `SESSION_SECRET` | Signs the httpOnly session cookie after Steam OpenID. |
+| `ENCRYPTION_KEY` | Encrypts the user's match-history code and share code at rest (AES-256-GCM). |
+| `DATABASE_URL` | Postgres on Render. Without it, the API uses SQLite in `DATA_DIR`. |
+| `PUBLIC_API_URL` | External API origin, used as the OpenID return URL. Example: `https://cs2clips.onrender.com`. |
+| `FRONTEND_URL` | Where login returns the browser. `https://xdkurbie.github.io/cs2-clips`. |
+| `STEAM_BOT_PROFILE_URL` | Optional. Otherwise the bot profile is `https://steamcommunity.com/profiles/<bot steamid>`. |
+| Auth code `XXXX-XXXXX-XXXX` and one share code | Entered once after login. Stored encrypted. The user can delete them. |
 | `STEAM_BOT_REFRESH_TOKEN` | Preferred. A dedicated bot account that can open CS2. Mint it locally with `STEAM_BOT_USERNAME` and `STEAM_BOT_PASSWORD` set, then `npm run bot-login`. Paste the printed token into `.env` and unset the password. |
 | `STEAM_BOT_USERNAME` / `STEAM_BOT_PASSWORD` | Used only if you do not have a refresh token yet. |
 | `STEAM_BOT_SHARED_SECRET` | Optional base64 Steam Guard shared secret so an unattended login can complete. Leave empty and use the refresh token instead. |
@@ -61,11 +67,13 @@ Valve deletes replay files after a few weeks. If the Game Coordinator has no URL
 
 ## Deploy
 
-**Render (recommended, one service).** `render.yaml` builds the Dockerfile, binds `0.0.0.0:$PORT`, and mounts `/data` for parsed matches. Set the env vars above in the dashboard. Do not put user auth codes there.
+**Render API.** `render.yaml` is a free web service plus a free Postgres database. Health check is `GET /api/health`. The service binds `0.0.0.0:$PORT`. Parsed demo files go to `/tmp/cs2clips` and are pruned, because the free instance has no disk and `/tmp` is wiped on spin-down. Accounts, encrypted codes, and the match index live in Postgres. Set `SESSION_SECRET`, `ENCRYPTION_KEY`, and the Steam bot token in the dashboard (`sync: false`). Confirm `PUBLIC_API_URL` matches the hostname Render assigns.
 
-**Vercel (frontend only).** `frontend/vercel.json` is a static SPA. Set `VITE_API_URL` only if you later point fetches at another host; the current UI uses same-origin `/api`. For a split deploy, set `CORS_ORIGIN` on the API to the Vercel origin. The parser and the Game Coordinator have to stay on the Render service, because Vercel serverless will not hold a Steam bot session.
+**GitHub Pages UI.** `.github/workflows/pages.yml` publishes `web/frontend/dist` to `https://xdkurbie.github.io/cs2-clips` with base `/cs2-clips/`. Set the repository variable `VITE_API_URL` to the Render origin before that workflow runs. The API allows credentialed CORS from `https://xdkurbie.github.io`. The session cookie is `SameSite=None; Secure`.
 
-Demos and timelines live on the disk. Render's filesystem is ephemeral without that disk.
+A limited Steam account can accept friend requests and cannot send them. The bot only accepts, so the user sends the invite.
+
+**Do not** push this site into the `xdkurbie.github.io` repository. Pages for this project comes from this repo only.
 
 ## Layout
 

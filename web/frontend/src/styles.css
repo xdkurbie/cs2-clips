@@ -42,6 +42,10 @@ input, select { background: #10141c; border: 1px solid var(--line); border-radiu
 label { display: grid; gap: 4px; margin: 8px 0; font-size: 13px; color: var(--muted); }
 button:not(.ghost):not(.tag):not(.prow):not(.chip):not(.hname) { background: var(--brass); color: #1a140c; border: 0; border-radius: 8px; padding: 8px 12px; font-weight: 650; }
 .err { color: var(--danger); }
+.ok { color: var(--good); }
+.who { display: flex; align-items: center; gap: 10px; }
+.who img { border-radius: 50%; }
+.check { display: flex; gap: 8px; align-items: center; }
 .matches, .codes { list-style: none; padding: 0; }
 .matches a, .codes li { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); }
 .replay { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 320px; grid-template-rows: auto minmax(0, 1fr) auto; }

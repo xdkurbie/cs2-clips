@@ -14,14 +14,44 @@ let state = {
 
 let starting = null;
 let csgo = null;
+let botUser = null;
+let botSteamId = "";
 let queue = Promise.resolve();
+
+const FRIEND = 3;
+const REQUEST_RECIPIENT = 2;
 
 export function gcStatus() {
   return {
     status: state.status,
     detail: state.detail,
     configured: state.status !== "unconfigured",
+    botSteamId,
   };
+}
+
+export function botProfile() {
+  const url = process.env.STEAM_BOT_PROFILE_URL
+    || (botSteamId ? `https://steamcommunity.com/profiles/${botSteamId}` : "");
+  return {
+    url,
+    steamid: botSteamId,
+    online: state.status === "ready" || state.status === "starting",
+    limitedAccountNote: "A limited Steam account can accept friend requests but cannot send them. The bot only accepts, so the user sends the invite.",
+  };
+}
+
+export function isFriend(steamid64) {
+  if (!botUser?.myFriends || !steamid64) return false;
+  return botUser.myFriends[steamid64] === FRIEND;
+}
+
+export function notifyMatchReady(steamid64, text) {
+  try {
+    botUser?.chat?.sendFriendMessage?.(steamid64, String(text).slice(0, 400));
+  } catch {
+    /* chat is optional */
+  }
 }
 
 export function startGcWorker() {
@@ -39,14 +69,26 @@ export function startGcWorker() {
       const GlobalOffensive = gcMod.default || gcMod;
       const SteamTotp = totpMod.default || totpMod;
       const user = new SteamUser();
+      botUser = user;
       csgo = new GlobalOffensive(user);
       user.on("error", () => {
-        state = { status: "error", detail: "Steam login failed. Check the bot credentials." };
+        state = { status: "error", detail: "Steam login failed. Check the bot credentials.", botSteamId };
+      });
+      user.on("friendRelationship", (sid, relationship) => {
+        const incoming = relationship === (SteamUser.EFriendRelationship?.RequestRecipient ?? REQUEST_RECIPIENT);
+        if (!incoming) return;
+        try { user.addFriend(sid); } catch { /* already handled or rate limited */ }
       });
       user.on("loggedOn", () => {
-        state = { status: "starting", detail: "Logged on. Connecting to the Game Coordinator." };
+        botSteamId = user.steamID?.getSteamID64?.() || botSteamId;
+        state = { status: "starting", detail: "Logged on. Connecting to the Game Coordinator.", botSteamId };
         user.setPersona(SteamUser.EPersonaState?.Online ?? 1);
         user.gamesPlayed([730]);
+      });
+      user.on("disconnected", () => {
+        if (state.status !== "unconfigured") {
+          state = { status: "starting", detail: "Steam session dropped. Reconnecting.", botSteamId };
+        }
       });
       csgo.on("connectedToGC", () => {
         state = { status: "ready", detail: "Connected to the CS2 Game Coordinator." };

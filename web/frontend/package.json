@@ -1,0 +1,24 @@
+{
+  "name": "cs2clips-web-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "node --test src/source2/source2.test.js"
+  },
+  "dependencies": {
+    "fzstd": "^0.1.1",
+    "meshoptimizer": "^0.22.0",
+    "mp4-muxer": "^5.2.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "three": "^0.170.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "vite": "^6.0.6"
+  }
+}

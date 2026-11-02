@@ -1,0 +1,27 @@
+name: web
+on:
+  pull_request:
+    paths: ["web/**", ".github/workflows/web.yml"]
+  push:
+    branches: [main]
+    paths: ["web/**", ".github/workflows/web.yml"]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22", cache: npm, cache-dependency-path: web/package-lock.json }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r web/parser/requirements.txt
+      - run: npm ci
+        working-directory: web
+      - name: Public demo
+        run: curl -fsSL -o test_demo.dem https://github.com/LaihoE/demoparser/raw/main/src/parser/test_demo.dem
+      - run: npm test
+        working-directory: web
+        env:
+          CS2CLIPS_TEST_DEMO: ${{ github.workspace }}/test_demo.dem
+      - run: npm run build -w frontend
+        working-directory: web

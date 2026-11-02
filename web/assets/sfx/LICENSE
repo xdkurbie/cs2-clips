@@ -1,0 +1,4 @@
+The soft bed and whoosh used by clip and montage export are synthesized in the browser
+(`frontend/src/export/encode.js`, `mixAudio`). They are original and released under CC0 1.0.
+
+No third-party music, Valve audio, or recorded samples are shipped.

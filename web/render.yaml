@@ -1,0 +1,44 @@
+# Render Blueprint. Free web service + free Postgres.
+# Parsed demo files use /tmp (no disk on the free instance) and are pruned.
+# Accounts and encrypted match codes live in Postgres.
+# https://render.com/docs/blueprint-spec
+databases:
+  - name: cs2clips-db
+    plan: free
+    databaseName: cs2clips
+    user: cs2clips
+
+services:
+  - type: web
+    name: cs2clips
+    runtime: docker
+    plan: free
+    branch: main
+    rootDir: web
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATA_DIR
+        value: /tmp/cs2clips
+      - key: PUBLIC_API_URL
+        value: https://cs2clips.onrender.com
+      - key: FRONTEND_URL
+        value: https://xdkurbie.github.io/cs2-clips
+      - key: CORS_ORIGIN
+        value: https://xdkurbie.github.io
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: cs2clips-db
+          property: connectionString
+      - key: STEAM_WEB_API_KEY
+        sync: false
+      - key: STEAM_BOT_REFRESH_TOKEN
+        sync: false
+      - key: STEAM_BOT_PROFILE_URL
+        sync: false
+      - key: SESSION_SECRET
+        sync: false
+      - key: ENCRYPTION_KEY
+        sync: false

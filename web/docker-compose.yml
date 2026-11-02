@@ -1,0 +1,14 @@
+services:
+  cs2clips:
+    build: .
+    ports:
+      - "8787:8787"
+    env_file:
+      - .env
+    environment:
+      DATA_DIR: /data
+      PORT: "8787"
+    volumes:
+      - cs2data:/data
+volumes:
+  cs2data:

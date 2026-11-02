@@ -1,0 +1,21 @@
+{
+  "name": "cs2clips-web-backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "CS2 Clips web API: demo upload, share codes, Steam match history, Game Coordinator downloads",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node --test test/*.test.js",
+    "bot-login": "node src/bot-login.js"
+  },
+  "dependencies": {
+    "busboy": "^1.6.0",
+    "express": "^4.21.2",
+    "globaloffensive": "^3.2.0",
+    "pg": "^8.13.1",
+    "steam-totp": "^2.1.2",
+    "steam-user": "^5.2.3"
+  }
+}

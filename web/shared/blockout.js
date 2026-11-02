@@ -1,7 +1,8 @@
 /**
- * Original blockout geometry from where players actually stood.
- * Floors sit on the sampled foot height, so ramps, sites and multiple
- * levels stay apart. This is not Valve art — it is a walkable-volume blockout.
+ * Original blockout from every sampled foot position in the demo.
+ * Floors are greedy-merged per height band. Full-height walls sit only on the
+ * outer rim. Steps between bands are short risers, not a second maze.
+ * This is not Valve geometry.
  */
 
 function greedy(mask, cols, rows) {
@@ -32,18 +33,17 @@ function greedy(mask, cols, rows) {
 
 /**
  * @param {{x:number,y:number,z:number}[]} points CS world units (Z up)
- * @returns {{floors:object[], walls:object[], bounds:object|null}}
- * Boxes are in CS space: x/y origin at the min corner, z is the floor top.
+ * Boxes: x/y is the min corner. For floors, z is the top. For walls, z is the base.
  */
 export function buildBlockout(points, opts = {}) {
-  const cell = opts.cell ?? 64;
-  const zBin = opts.zBin ?? 32;
+  const cell = opts.cell ?? 72;
+  const zBin = opts.zBin ?? 24;
   const list = [];
   for (const p of points) {
     if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y) || !Number.isFinite(p.z)) continue;
     list.push(p);
   }
-  if (!list.length) return { floors: [], walls: [], bounds: null };
+  if (!list.length) return { floors: [], walls: [], bounds: null, cell, zBin };
 
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity, minZ = Infinity, maxZ = -Infinity;
   for (const p of list) {
@@ -59,26 +59,89 @@ export function buildBlockout(points, opts = {}) {
   const cols = Math.max(1, Math.ceil((maxX - originX) / cell) + 1);
   const rows = Math.max(1, Math.ceil((maxY - originY) / cell) + 1);
 
-  const masks = new Map();
-  const colHeights = new Map();
+  const hist = new Map();
   for (const p of list) {
     const ix = Math.floor((p.x - originX) / cell);
     const iy = Math.floor((p.y - originY) / cell);
     if (ix < 0 || iy < 0 || ix >= cols || iy >= rows) continue;
     const iz = Math.round(p.z / zBin);
-    let mask = masks.get(iz);
+    const key = iy * cols + ix;
+    let bins = hist.get(key);
+    if (!bins) {
+      bins = new Map();
+      hist.set(key, bins);
+    }
+    bins.set(iz, (bins.get(iz) || 0) + 1);
+  }
+
+  /** @type {{ix:number,iy:number,iz:number,z:number}[]} */
+  const levels = [];
+  for (const [key, bins] of hist) {
+    const ordered = [...bins.keys()].sort((a, b) => a - b);
+    let cluster = [ordered[0]];
+    const flush = () => {
+      let weight = 0;
+      let sum = 0;
+      for (const b of cluster) {
+        const c = bins.get(b);
+        weight += c;
+        sum += b * c;
+      }
+      const mean = sum / weight;
+      levels.push({
+        ix: key % cols,
+        iy: (key / cols) | 0,
+        iz: Math.round(mean),
+        z: mean * zBin,
+      });
+      cluster = [];
+    };
+    for (let i = 1; i < ordered.length; i++) {
+      if (ordered[i] - ordered[i - 1] > 2) flush();
+      cluster.push(ordered[i]);
+    }
+    flush();
+  }
+
+  const masks = new Map();
+  const colLevels = new Map();
+  for (const lv of levels) {
+    let mask = masks.get(lv.iz);
     if (!mask) {
       mask = new Uint8Array(cols * rows);
-      masks.set(iz, mask);
+      masks.set(lv.iz, mask);
     }
-    const key = iy * cols + ix;
-    mask[key] = 1;
-    let hs = colHeights.get(key);
-    if (!hs) {
-      hs = [];
-      colHeights.set(key, hs);
+    mask[lv.iy * cols + lv.ix] = 1;
+    const key = lv.iy * cols + lv.ix;
+    let arr = colLevels.get(key);
+    if (!arr) {
+      arr = [];
+      colLevels.set(key, arr);
     }
-    if (hs[hs.length - 1] !== iz) hs.push(iz);
+    arr.push(lv.iz);
+  }
+
+  // Close small holes so greedy merge can make real rooms, without bridging a gap.
+  for (const [iz, mask] of [...masks]) {
+    const grown = new Uint8Array(mask);
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < cols; x++) {
+        if (!mask[y * cols + x]) continue;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const nx = x + dx;
+            const ny = y + dy;
+            if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
+            const nk = ny * cols + nx;
+            if (grown[nk]) continue;
+            const other = colLevels.get(nk);
+            if (other && other.some((h) => Math.abs(h - iz) > 2)) continue;
+            grown[nk] = 1;
+          }
+        }
+      }
+    }
+    masks.set(iz, grown);
   }
 
   const floors = [];
@@ -90,53 +153,53 @@ export function buildBlockout(points, opts = {}) {
         z: iz * zBin,
         sx: r.w * cell,
         sy: r.h * cell,
-        sz: 12,
+        sz: 16,
       });
     }
   }
 
-  function ceiling(ix, iy, iz) {
-    const hs = colHeights.get(iy * cols + ix);
-    if (!hs) return 100;
-    let best = Infinity;
-    const base = iz * zBin;
-    for (const h of hs) {
-      const dz = h * zBin - base;
-      if (dz > zBin && dz < best) best = dz;
-    }
-    if (!Number.isFinite(best)) return 100;
-    return Math.max(28, Math.min(100, best - 6));
-  }
-
-  function occupied(ix, iy, iz) {
+  function near(ix, iy, iz) {
     if (ix < 0 || iy < 0 || ix >= cols || iy >= rows) return false;
-    for (const dz of [iz - 1, iz, iz + 1]) {
-      const m = masks.get(dz);
-      if (m && m[iy * cols + ix] === 1) return true;
+    for (let d = -2; d <= 2; d++) {
+      const m = masks.get(iz + d);
+      if (m && m[iy * cols + ix]) return true;
     }
     return false;
   }
 
+  function lowerNeighbor(ix, iy, iz) {
+    const hs = colLevels.get(iy * cols + ix);
+    if (!hs) return null;
+    let best = null;
+    for (const h of hs) {
+      if (h < iz - 2 && (best === null || h > best)) best = h;
+    }
+    return best;
+  }
+
   const walls = [];
-  function pushRun(axis, fixed, start, length, iz, height) {
-    if (length <= 0 || height < 20) return;
+  function pushRun(axis, fixed, start, length, iz, height, kind) {
+    if (length <= 0 || height < 12) return;
+    const z = kind === "wall" ? iz * zBin : iz * zBin;
     if (axis === "x") {
       walls.push({
-        x: originX + fixed * cell - 5,
+        x: originX + fixed * cell - 8,
         y: originY + start * cell,
-        z: iz * zBin,
-        sx: 10,
+        z,
+        sx: kind === "wall" ? 16 : 10,
         sy: length * cell,
         sz: height,
+        kind,
       });
     } else {
       walls.push({
         x: originX + start * cell,
-        y: originY + fixed * cell - 5,
-        z: iz * zBin,
+        y: originY + fixed * cell - 8,
+        z,
         sx: length * cell,
-        sy: 10,
+        sy: kind === "wall" ? 16 : 10,
         sz: height,
+        kind,
       });
     }
   }
@@ -145,86 +208,68 @@ export function buildBlockout(points, opts = {}) {
     for (let ix = 0; ix <= cols; ix++) {
       let run = 0;
       let start = 0;
+      let runKind = "";
       let runH = 0;
       const flush = () => {
-        pushRun("x", ix, start, run, iz, runH);
+        if (runKind === "wall") pushRun("x", ix, start, run, iz, 112, "wall");
+        else if (runKind === "step") pushRun("x", ix, start, run, iz - Math.round(runH / zBin), runH, "step");
         run = 0;
+        runKind = "";
       };
       for (let iy = 0; iy < rows; iy++) {
-        const left = occupied(ix - 1, iy, iz);
-        const right = occupied(ix, iy, iz);
+        const left = near(ix - 1, iy, iz);
+        const right = near(ix, iy, iz);
         if (left === right) {
           flush();
           continue;
         }
-        const side = left ? { ix: ix - 1, iy } : { ix, iy };
-        const h = ceiling(side.ix, side.iy, iz);
-        if (run > 0 && Math.abs(h - runH) > 18) flush();
-        if (run === 0) {
+        const emptySide = left ? { ix, iy } : { ix: ix - 1, iy };
+        const solid = left ? { ix: ix - 1, iy } : { ix, iy };
+        const drop = lowerNeighbor(emptySide.ix, emptySide.iy, iz);
+        const kind = drop == null ? "wall" : "step";
+        const h = drop == null ? 112 : Math.min(100, (iz - drop) * zBin);
+        if (run && (kind !== runKind || Math.abs(h - runH) > 20)) flush();
+        if (!run) {
           start = iy;
+          runKind = kind;
           runH = h;
         }
         run++;
+        void solid;
       }
       flush();
     }
     for (let iy = 0; iy <= rows; iy++) {
       let run = 0;
       let start = 0;
+      let runKind = "";
       let runH = 0;
       const flush = () => {
-        pushRun("y", iy, start, run, iz, runH);
+        if (runKind === "wall") pushRun("y", iy, start, run, iz, 112, "wall");
+        else if (runKind === "step") pushRun("y", iy, start, run, iz - Math.round(runH / zBin), runH, "step");
         run = 0;
+        runKind = "";
       };
       for (let ix = 0; ix < cols; ix++) {
-        const a = occupied(ix, iy - 1, iz);
-        const b = occupied(ix, iy, iz);
+        const a = near(ix, iy - 1, iz);
+        const b = near(ix, iy, iz);
         if (a === b) {
           flush();
           continue;
         }
-        const side = a ? { ix, iy: iy - 1 } : { ix, iy };
-        const h = ceiling(side.ix, side.iy, iz);
-        if (run > 0 && Math.abs(h - runH) > 18) flush();
-        if (run === 0) {
+        const emptySide = a ? { ix, iy } : { ix, iy: iy - 1 };
+        const drop = lowerNeighbor(emptySide.ix, emptySide.iy, iz);
+        const kind = drop == null ? "wall" : "step";
+        const h = drop == null ? 112 : Math.min(100, (iz - drop) * zBin);
+        if (run && (kind !== runKind || Math.abs(h - runH) > 20)) flush();
+        if (!run) {
           start = ix;
+          runKind = kind;
           runH = h;
         }
         run++;
       }
       flush();
-    }
-  }
-
-  // Risers where two walked cells meet at different heights (stairs, drops, windows).
-  for (const [key, hs] of colHeights) {
-    const ix = key % cols;
-    const iy = (key / cols) | 0;
-    const unique = [...new Set(hs)];
-    for (const iz of unique) {
-      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-        const nx = ix + dx;
-        const ny = iy + dy;
-        if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
-        const other = colHeights.get(ny * cols + nx);
-        if (!other) continue;
-        let lower = null;
-        for (const h of other) {
-          if (h < iz && (lower === null || h > lower)) lower = h;
-        }
-        if (lower === null) continue;
-        const dz = (iz - lower) * zBin;
-        if (dz < 48 || dz > 160) continue;
-        if (dx === 1) {
-          walls.push({ x: originX + (ix + 1) * cell - 4, y: originY + iy * cell, z: lower * zBin, sx: 8, sy: cell, sz: dz });
-        } else if (dx === -1) {
-          walls.push({ x: originX + ix * cell - 4, y: originY + iy * cell, z: lower * zBin, sx: 8, sy: cell, sz: dz });
-        } else if (dy === 1) {
-          walls.push({ x: originX + ix * cell, y: originY + (iy + 1) * cell - 4, z: lower * zBin, sx: cell, sy: 8, sz: dz });
-        } else {
-          walls.push({ x: originX + ix * cell, y: originY + iy * cell - 4, z: lower * zBin, sx: cell, sy: 8, sz: dz });
-        }
-      }
     }
   }
 

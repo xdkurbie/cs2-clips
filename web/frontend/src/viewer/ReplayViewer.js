@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { createBlockoutMesh, csToThree, lerpAngle, viewForward } from "./mesh.js";
+import { createBlockoutMesh, createSiteMarkers, csToThree, lerpAngle, viewForward } from "./mesh.js";
 
 const SPEEDS = [0.25, 0.5, 1, 2, 4];
 const UP = new THREE.Vector3(0, 1, 0);
@@ -79,24 +79,43 @@ export class ReplayViewer {
       preserveDrawingBuffer: true,
       powerPreference: "high-performance",
     });
-    this.renderer.setClearColor(0x10141c, 1);
+    this.renderer.setClearColor(0x1a2433, 1);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.renderer.toneMapping = THREE.ReinhardToneMapping;
+    this.renderer.toneMappingExposure = 1.15;
     this.renderer.localClippingEnabled = true;
     this.clip = new THREE.Plane(new THREE.Vector3(0, -1, 0), this.clipH);
     this.renderer.clippingPlanes = [this.clip];
+    // Shadow maps are left off. Turning them on before every material has a
+    // compiled program throws in headless WebGL (`program.isReady`). The
+    // directional light still shades the blockout.
+    this.renderer.shadowMap.enabled = false;
 
     this.scene = new THREE.Scene();
-    this.scene.fog = new THREE.FogExp2(0x10141c, this.low ? 0.00022 : 0.00012);
-    this.scene.add(new THREE.HemisphereLight(0xc5d0dc, 0x1a140e, this.low ? 1.15 : 0.9));
+    this.scene.background = new THREE.Color(0x1a2433);
+    this.scene.fog = new THREE.Fog(0x1a2433, 1800, 9000);
+    this.scene.add(new THREE.HemisphereLight(0xe7eef8, 0x3a3228, 0.72));
+    this.scene.add(new THREE.AmbientLight(0xffffff, 0.28));
+    const sun = new THREE.DirectionalLight(0xfff6e8, 1.15);
+    sun.position.set(900, 1600, 500);
     if (!this.low) {
-      const sun = new THREE.DirectionalLight(0xfff3df, 0.85);
-      sun.position.set(400, 900, 200);
-      this.scene.add(sun);
+      sun.castShadow = true;
+      sun.shadow.mapSize.set(1024, 1024);
+      sun.shadow.bias = -0.0004;
+      const spanGuess = 4000;
+      sun.shadow.camera.near = 50;
+      sun.shadow.camera.far = spanGuess * 2;
+      sun.shadow.camera.left = -spanGuess;
+      sun.shadow.camera.right = spanGuess;
+      sun.shadow.camera.top = spanGuess;
+      sun.shadow.camera.bottom = -spanGuess;
     }
+    this.scene.add(sun);
+    this._sun = sun;
 
     const plants = (this.timeline.bomb || []).filter((b) => b.kind === "plant");
     const mesh = createBlockoutMesh(this.blockout, plants);
-    this.scene.add(mesh.floors, mesh.walls);
+    this.scene.add(mesh.ground, mesh.floors, mesh.walls, createSiteMarkers(plants));
     this._mapMats = mesh.materials;
 
     const b = this.blockout?.bounds;
@@ -107,9 +126,21 @@ export class ReplayViewer {
     const span = b ? Math.max(b.maxX - b.minX, b.maxY - b.minY, 800) : 2000;
     this.span = span;
 
-    this.persp = new THREE.PerspectiveCamera(62, 1, 4, 40000);
-    this.persp.position.set(cx + span * 0.2, (b?.maxZ ?? 0) + span * 0.55, -cy + span * 0.55);
+    this.persp = new THREE.PerspectiveCamera(48, 1, 4, 40000);
+    this.persp.position.set(cx + span * 0.22, (b?.maxZ ?? 0) + span * 0.42, -cy + span * 0.62);
     this.persp.lookAt(this.center);
+    this._homePos = this.persp.position.clone();
+    this._homeTarget = this.center.clone();
+    if (this._sun) {
+      this._sun.shadow.camera.left = -span;
+      this._sun.shadow.camera.right = span;
+      this._sun.shadow.camera.top = span;
+      this._sun.shadow.camera.bottom = -span;
+      this._sun.shadow.camera.far = span * 3;
+      this._sun.shadow.camera.updateProjectionMatrix();
+      this._sun.target.position.copy(this.center);
+      this.scene.add(this._sun.target);
+    }
     this.ortho = new THREE.OrthographicCamera(-span / 2, span / 2, span / 2, -span / 2, 1, 40000);
     this.ortho.position.set(cx, (b?.maxZ ?? 0) + 2500, -cy);
     this.ortho.up.set(0, 0, -1);
@@ -124,16 +155,41 @@ export class ReplayViewer {
 
     const n = Math.max(1, this.timeline.players.length);
     this.n = n;
-    this.body = new THREE.InstancedMesh(new THREE.CapsuleGeometry(12, 28, 4, 8), new THREE.MeshLambertMaterial(), n);
-    this.head = new THREE.InstancedMesh(new THREE.SphereGeometry(8, 10, 8), new THREE.MeshLambertMaterial(), n);
+    const bodyMat = new THREE.MeshLambertMaterial({ emissive: 0x22180e, emissiveIntensity: 0.35 });
+    const headMat = new THREE.MeshLambertMaterial({ emissive: 0x22180e, emissiveIntensity: 0.35 });
+    this.body = new THREE.InstancedMesh(new THREE.CapsuleGeometry(14, 32, 4, 8), bodyMat, n);
+    this.head = new THREE.InstancedMesh(new THREE.SphereGeometry(9, 12, 8), headMat, n);
+    this.disc = new THREE.InstancedMesh(
+      new THREE.CylinderGeometry(26, 26, 3, 12),
+      new THREE.MeshBasicMaterial(),
+      n,
+    );
     this.cone = new THREE.InstancedMesh(
-      new THREE.ConeGeometry(16, 130, 8, 1, true),
-      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.18, depthWrite: false, side: THREE.DoubleSide }),
+      new THREE.ConeGeometry(18, 170, 8, 1, true),
+      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.38, depthWrite: false, side: THREE.DoubleSide }),
       n,
     );
     this.body.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(n * 3), 3);
     this.head.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(n * 3), 3);
-    this.scene.add(this.body, this.head, this.cone);
+    this.disc.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(n * 3), 3);
+    this.cone.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(n * 3), 3);
+    this.scene.add(this.disc, this.body, this.head, this.cone);
+    this._color = new THREE.Color();
+    this._dir = new THREE.Vector3();
+    this._ndc = new THREE.Vector3();
+    this._deathAt = new Float32Array(n);
+    this._wasAlive = new Uint8Array(n);
+    this.deaths = [];
+    for (let i = 0; i < n; i++) {
+      const mat = new THREE.MeshBasicMaterial({ color: 0xff5d4a, transparent: true, depthTest: false });
+      const g = new THREE.Group();
+      const a = new THREE.Mesh(new THREE.BoxGeometry(36, 5, 5), mat);
+      const c = new THREE.Mesh(new THREE.BoxGeometry(5, 5, 36), mat);
+      g.add(a, c);
+      g.visible = false;
+      this.scene.add(g);
+      this.deaths.push({ g, mat });
+    }
     this.dummy = new THREE.Object3D();
     this._fwd = new THREE.Vector3();
     this._pos = new THREE.Vector3();
@@ -142,19 +198,24 @@ export class ReplayViewer {
     this._look = new THREE.Vector3();
 
     this.viewmodel = new THREE.Group();
-    const gun = new THREE.Mesh(new THREE.BoxGeometry(3.2, 3.2, 26), new THREE.MeshLambertMaterial({ color: 0x2a241c }));
-    gun.position.set(7, -6, -16);
+    const gunMat = new THREE.MeshLambertMaterial({ color: 0x2c241c });
+    const gun = new THREE.Mesh(new THREE.BoxGeometry(4, 5, 36), gunMat);
+    gun.position.set(18, -16, -40);
+    gun.rotation.y = 0.55;
+    const barrel = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 22), gunMat);
+    barrel.position.set(16, -12, -68);
+    this.viewmodel.add(barrel);
     this.viewmodel.add(gun);
     this.viewmodel.visible = false;
     this.persp.add(this.viewmodel);
     this.scene.add(this.persp);
 
-    this.nadeMesh = new THREE.InstancedMesh(new THREE.SphereGeometry(5, 8, 6), new THREE.MeshLambertMaterial(), 48);
+    this.nadeMesh = new THREE.InstancedMesh(new THREE.SphereGeometry(9, 10, 8), new THREE.MeshLambertMaterial({ emissive: 0x332211, emissiveIntensity: 0.4 }), 48);
     this.nadeMesh.count = 0;
     this.scene.add(this.nadeMesh);
     this.fireMesh = new THREE.InstancedMesh(
       new THREE.PlaneGeometry(1, 1),
-      new THREE.MeshBasicMaterial({ color: 0xff7a32, transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide }),
+      new THREE.MeshBasicMaterial({ color: 0xff6a1a, transparent: true, opacity: 0.92, depthWrite: false, side: THREE.DoubleSide }),
       40,
     );
     this.fireMesh.count = 0;
@@ -165,7 +226,7 @@ export class ReplayViewer {
       const g = new THREE.Group();
       const sphere = new THREE.Mesh(
         new THREE.SphereGeometry(118, 18, 12),
-        new THREE.MeshLambertMaterial({ color: 0xd5dde6, transparent: true, opacity: 0.28, depthWrite: false }),
+        new THREE.MeshLambertMaterial({ color: 0xe7eef6, emissive: 0x9aa8b8, emissiveIntensity: 0.35, transparent: true, opacity: 0.5, depthWrite: false }),
       );
       const ring = new THREE.Mesh(
         new THREE.RingGeometry(130, 138, 28, 1, 0, Math.PI * 2),
@@ -196,17 +257,42 @@ export class ReplayViewer {
     this.scene.add(this.arcGroup);
     this.arcs = [];
 
+    this.blindEl = document.createElement("div");
+    this.blindEl.className = "blind";
+    this.overlay.appendChild(this.blindEl);
+    this._rings = [];
+    for (let i = 1; i <= 24; i++) {
+      this._rings.push(new THREE.RingGeometry(132, 146, 28, 1, Math.PI / 2, (i / 24) * Math.PI * 2));
+    }
     this.tags = this.timeline.players.map((p) => {
       const el = document.createElement("button");
       el.type = "button";
       el.className = "tag";
       const name = document.createElement("span");
+      name.className = "tag-name";
       name.textContent = p.name || p.steamid;
-      el.appendChild(name);
+      const hp = document.createElement("i");
+      hp.className = "tag-hp";
+      const fill = document.createElement("b");
+      hp.appendChild(fill);
+      const gun = document.createElement("span");
+      gun.className = "tag-gun";
+      el.append(name, hp, gun);
       el.addEventListener("click", () => this.setFocus(p.steamid, "follow"));
       this.overlay.appendChild(el);
-      return el;
+      return { el, fill, gun, hp: -1, weapon: "" };
     });
+    this.feedSlots = [];
+    for (let i = 0; i < 5; i++) {
+      const line = document.createElement("div");
+      const a = document.createElement("b");
+      const w = document.createElement("span");
+      const v = document.createElement("b");
+      line.append(a, w, v);
+      line.hidden = true;
+      this.feedEl.appendChild(line);
+      this.feedSlots.push({ line, a, w, v });
+    }
 
     this._buildTeams();
     this._resize = () => this.resize();
@@ -326,6 +412,10 @@ export class ReplayViewer {
     this.controls.enablePan = true;
     this.controls.object = top ? this.ortho : this.persp;
     if (this.viewmodel) this.viewmodel.visible = this.mode === "pov";
+    if (this.mode === "orbit" && this._homePos) {
+      this.persp.position.copy(this._homePos);
+      this.controls.target.copy(this._homeTarget);
+    }
     if (top) {
       this.ortho.position.x = this.center.x;
       this.ortho.position.z = this.center.z;
@@ -426,8 +516,8 @@ export class ReplayViewer {
       });
       const g = new THREE.BufferGeometry();
       g.setAttribute("position", new THREE.BufferAttribute(arr, 3));
-      const color = tr.kind === "smoke" ? 0xd5dde6 : tr.kind === "flash" ? 0xf6f0c4 : tr.kind === "molotov" ? 0xe07a3d : 0xd85c4c;
-      const line = new THREE.Line(g, new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.9 }));
+      const color = tr.kind === "smoke" ? 0xd5e4f2 : tr.kind === "flash" ? 0xfff3b0 : tr.kind === "molotov" ? 0xff6a1a : 0xff5a42;
+      const line = new THREE.Line(g, new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.95 }));
       this.arcGroup.add(line);
       this.arcs.push({ line, ticks: tr.points.map((p) => p[0]), kind: tr.kind });
     }
@@ -476,6 +566,7 @@ export class ReplayViewer {
     const cam = this.mode === "top" ? this.ortho : this.persp;
     if (data) {
       const players = this._sample(data, this.tick);
+      this._lastPlayers = players;
       this._drawPlayers(players, cam);
       this._drawUtility(data.header, now);
       if (!this._hudAt || now - this._hudAt > 100) {
@@ -498,6 +589,10 @@ export class ReplayViewer {
       this.ortho.lookAt(t.x, t.y, t.z);
     }
     this.renderer.render(this.scene, cam);
+    if (!this._shadowBaked && this.renderer.shadowMap.enabled) {
+      this._shadowBaked = true;
+      this.renderer.shadowMap.autoUpdate = false;
+    }
     this._drawScrub();
     if (this.opts.fps) {
       this._fpsN = (this._fpsN || 0) + 1;
@@ -522,6 +617,7 @@ export class ReplayViewer {
     if (!data) return false;
     this.current = data;
     const players = this._sample(data, tick);
+    this._lastPlayers = players;
     const cam = this.mode === "top" ? this.ortho : this.persp;
     this._drawPlayers(players, cam);
     this._drawUtility(data.header, performance.now());
@@ -530,27 +626,44 @@ export class ReplayViewer {
   }
 
   _drawPlayers(players, cam) {
-    const color = new THREE.Color();
+    const color = this._color;
+    const weapons = (this.current && this.current.header.weapons) || this.timeline.weapons || [];
     let focusIndex = -1;
-    players.forEach((p, i) => {
+    const tr = this.timeline.tickrate || 64;
+    for (let i = 0; i < players.length; i++) {
+      const p = players[i];
       const meta = this.timeline.players[i];
       if (meta && meta.steamid === this.focus) focusIndex = i;
       const hide = !p.present || (this.mode === "pov" && meta?.steamid === this.focus);
       const teamCt = p.team === 3;
-      color.set(teamCt ? 0x8eb7e8 : 0xe0a36a);
-      if (!p.alive) color.multiplyScalar(0.45);
+      color.set(teamCt ? 0x4aa3ff : 0xf0a04a);
+      if (!p.alive) color.multiplyScalar(0.55);
       csToThree(p.x, p.y, p.z, this._pos);
       viewForward(p.yaw, p.pitch, this._fwd);
+      if (this._fwd.lengthSq() < 1e-6) this._fwd.set(1, 0, 0);
+      else this._fwd.normalize();
       const s = hide ? 0.0001 : 1;
+      if (p.alive) this._wasAlive[i] = 1;
+      else if (this._wasAlive[i]) {
+        this._deathAt[i] = this.tick;
+        this._wasAlive[i] = 0;
+      }
+      this.dummy.position.copy(this._pos);
+      this.dummy.position.y += 2;
+      this.dummy.rotation.set(0, 0, 0);
+      this.dummy.scale.set(s, s, s);
+      this.dummy.updateMatrix();
+      this.disc.setMatrixAt(i, this.dummy.matrix);
+      this.disc.setColorAt(i, color);
       this.dummy.position.copy(this._pos);
       this.dummy.position.y += p.alive ? 36 : 10;
       this.dummy.rotation.set(p.alive ? 0 : 1.15, 0, 0);
-      this.dummy.scale.setScalar(s);
+      this.dummy.scale.setScalar(s * (p.alive ? 1 : 0.7));
       this.dummy.updateMatrix();
       this.body.setMatrixAt(i, this.dummy.matrix);
       this.body.setColorAt(i, color);
       this.dummy.position.copy(this._pos);
-      this.dummy.position.y += p.alive ? 66 : 14;
+      this.dummy.position.y += p.alive ? 68 : 14;
       this.dummy.rotation.set(0, 0, 0);
       this.dummy.scale.setScalar(s);
       this.dummy.updateMatrix();
@@ -558,31 +671,54 @@ export class ReplayViewer {
       this.head.setColorAt(i, color);
       this.dummy.position.copy(this._pos);
       this.dummy.position.y += 64;
-      this.dummy.quaternion.setFromUnitVectors(UP, this._fwd.clone().normalize());
+      this.dummy.quaternion.setFromUnitVectors(UP, this._fwd);
       this.dummy.scale.setScalar(!p.alive || hide || this.mode === "pov" ? 0.0001 : 1);
       this.dummy.updateMatrix();
       this.cone.setMatrixAt(i, this.dummy.matrix);
+      this.cone.setColorAt(i, color);
+
+      const death = this.deaths[i];
+      const age = p.alive ? 999 : (this.tick - this._deathAt[i]) / tr;
+      if (death && !p.alive && this._deathAt[i] > 0 && age < 3.2 && !hide) {
+        death.g.visible = true;
+        death.g.position.copy(this._pos);
+        death.g.position.y += 46;
+        death.mat.opacity = Math.max(0, 1 - age / 3.2);
+      } else if (death) death.g.visible = false;
 
       const tag = this.tags[i];
-      if (!tag) return;
+      if (!tag) continue;
       this._eye.copy(this._pos);
-      this._eye.y += 78;
-      const dir = this._eye.clone().sub(cam.position);
-      const front = dir.dot(cam.getWorldDirection(this._look)) > 0;
-      if (!p.present || !front || hide) { tag.style.display = "none"; return; }
-      const ndc = this._eye.clone().project(cam);
+      this._eye.y += 86;
+      this._dir.copy(this._eye).sub(cam.position);
+      const front = this._dir.dot(cam.getWorldDirection(this._look)) > 0;
+      if (!p.present || !front || hide) { tag.el.style.display = "none"; continue; }
+      this._ndc.copy(this._eye).project(cam);
       const w = this.canvas.clientWidth;
       const h = this.canvas.clientHeight;
-      tag.style.display = "block";
-      tag.style.transform = `translate3d(${(ndc.x * 0.5 + 0.5) * w}px, ${(-ndc.y * 0.5 + 0.5) * h}px, 0) translate(-50%, -130%)`;
-      tag.classList.toggle("ct", teamCt);
-      tag.classList.toggle("dead", !p.alive);
-    });
+      tag.el.style.display = "grid";
+      tag.el.style.transform = `translate3d(${(this._ndc.x * 0.5 + 0.5) * w}px, ${(-this._ndc.y * 0.5 + 0.5) * h}px, 0) translate(-50%, -120%)`;
+      tag.el.classList.toggle("ct", teamCt);
+      tag.el.classList.toggle("dead", !p.alive);
+      const hp = p.alive ? Math.max(0, Math.min(100, p.hp | 0)) : 0;
+      if (tag.hp !== hp) {
+        tag.hp = hp;
+        tag.fill.style.width = `${hp}%`;
+      }
+      const gunName = weaponLabel(weapons[p.weapon] || "");
+      if (tag.weapon !== gunName) {
+        tag.weapon = gunName;
+        tag.gun.textContent = gunName;
+      }
+    }
     this.body.instanceMatrix.needsUpdate = true;
     this.head.instanceMatrix.needsUpdate = true;
+    this.disc.instanceMatrix.needsUpdate = true;
     this.cone.instanceMatrix.needsUpdate = true;
     if (this.body.instanceColor) this.body.instanceColor.needsUpdate = true;
     if (this.head.instanceColor) this.head.instanceColor.needsUpdate = true;
+    if (this.disc.instanceColor) this.disc.instanceColor.needsUpdate = true;
+    if (this.cone.instanceColor) this.cone.instanceColor.needsUpdate = true;
 
     const fp = focusIndex >= 0 ? players[focusIndex] : null;
     if (fp && (this.mode === "follow" || this.mode === "pov")) {
@@ -597,13 +733,14 @@ export class ReplayViewer {
         this.persp.up.set(0, 1, 0);
         this.persp.lookAt(this._look);
       } else {
-        this._cam.copy(this._pos).addScaledVector(this._fwd, -168);
-        this._cam.y += 78;
+        this._cam.copy(this._pos).addScaledVector(this._fwd, -260);
+        this._cam.y += 130;
         this._look.copy(this._pos);
         this._look.y += 48;
         const k = this._snap ? 1 : 0.18;
         this.persp.position.lerp(this._cam, k);
         this.controls.target.lerp(this._look, k);
+        this.persp.lookAt(this._look);
       }
     }
   }
@@ -624,18 +761,26 @@ export class ReplayViewer {
         s.g.visible = true;
         s.g.position.copy(this._pos);
         const grow = Math.min(1, (tick - u.tick) / (tr * 0.35));
-        s.g.scale.setScalar(0.35 + grow * 0.65);
-        const arc = Math.max(0.05, (1 - life) * Math.PI * 2);
-        s.ring.scale.setScalar(1);
-        s.ring.geometry.dispose();
-        s.ring.geometry = new THREE.RingGeometry(128, 136, 28, 1, Math.PI / 2, arc);
-        s.ring.rotation.x = -Math.PI / 2;
-      } else if (u.kind === "molotov" && fireI < 40) {
-        const flick = this.low ? 1 : 0.85 + Math.sin(now / 80 + fireI) * 0.15;
+        s.g.scale.setScalar(0.55 + grow * 0.7);
+        const step = Math.max(0, Math.min(23, Math.round((1 - life) * 23)));
+        if (s.step !== step) {
+          s.step = step;
+          s.ring.geometry = this._rings[step];
+          s.ring.rotation.x = -Math.PI / 2;
+        }
+        const ct = this._isCt(u.steamid);
+        s.g.children[0].material.color.set(ct ? 0xd5e6f5 : 0xf3e2cc);
+      } else if (u.kind === "molotov" && fireI < 36) {
+        const flick = this.low ? 1 : 0.8 + Math.sin(now / 90 + u.tick) * 0.2;
         this.dummy.position.copy(this._pos);
-        this.dummy.position.y += 2;
+        this.dummy.position.y += 3;
         this.dummy.rotation.set(-Math.PI / 2, 0, 0);
-        this.dummy.scale.set(150 * flick, 150 * flick, 1);
+        this.dummy.scale.set(170 * flick, 170 * flick, 1);
+        this.dummy.updateMatrix();
+        this.fireMesh.setMatrixAt(fireI++, this.dummy.matrix);
+        this.dummy.rotation.set(0, 0, 0);
+        this.dummy.scale.set(18, 70 * flick, 18);
+        this.dummy.position.y += 30;
         this.dummy.updateMatrix();
         this.fireMesh.setMatrixAt(fireI++, this.dummy.matrix);
       } else if ((u.kind === "flash" || u.kind === "he") && flashI < this.flashes.length) {
@@ -643,13 +788,26 @@ export class ReplayViewer {
         m.visible = true;
         m.position.copy(this._pos);
         const k = 1 - life;
-        m.scale.setScalar((u.kind === "he" ? 90 : 70) * (0.4 + k));
-        m.material.opacity = 0.15 + k * 0.75;
+        m.scale.setScalar((u.kind === "he" ? 160 : 220) * (0.35 + k));
+        m.material.opacity = 0.2 + k * 0.8;
         m.material.color.set(u.kind === "he" ? 0xff8a3c : 0xfff6d0);
       }
     }
     for (let i = smokeI; i < this.smokes.length; i++) this.smokes[i].g.visible = false;
     for (let i = flashI; i < this.flashes.length; i++) this.flashes[i].visible = false;
+    let blind = 0;
+    const focus = this._focusedPlayer();
+    if (focus) {
+      for (const u of header.utility || []) {
+        if (u.kind !== "flash") continue;
+        const age = (tick - u.tick) / tr;
+        if (age < 0 || age > 1.1) continue;
+        const dx = focus.x - u.x;
+        const dy = focus.y - u.y;
+        if (dx * dx + dy * dy < 750 * 750) blind = Math.max(blind, 1 - age / 1.1);
+      }
+    }
+    if (this.blindEl) this.blindEl.style.opacity = String(blind * 0.72);
     this.fireMesh.count = fireI;
     this.fireMesh.instanceMatrix.needsUpdate = true;
 
@@ -738,19 +896,21 @@ export class ReplayViewer {
     for (const k of data.header.kills || []) {
       if (k.tick <= this.tick && this.tick - k.tick < tr * 6) feed.push(k);
     }
-    this.feedEl.replaceChildren();
-    for (const k of feed.slice(-5)) {
-      const line = document.createElement("div");
-      const a = document.createElement("b");
-      a.textContent = k.attackerName || "";
-      a.className = k.attackerTeam === "CT" ? "ct" : "t";
-      const w = document.createElement("span");
-      w.textContent = `${k.headshot ? "HS " : ""}${weaponLabel(k.weapon)}`;
-      const v = document.createElement("b");
-      v.textContent = k.victimName || "";
-      v.className = k.victimTeam === "CT" ? "ct" : "t";
-      line.append(a, w, v);
-      this.feedEl.appendChild(line);
+    const recent = feed.slice(-5);
+    const sig = recent.map((k) => k.tick).join(",");
+    if (sig !== this._feedSig) {
+      this._feedSig = sig;
+      for (let i = 0; i < this.feedSlots.length; i++) {
+        const slot = this.feedSlots[i];
+        const k = recent[i];
+        if (!k) { slot.line.hidden = true; continue; }
+        slot.line.hidden = false;
+        slot.a.textContent = k.attackerName || "";
+        slot.a.className = k.attackerTeam === "CT" ? "ct" : "t";
+        slot.w.textContent = `${k.headshot ? "HS " : ""}${weaponLabel(k.weapon)}`;
+        slot.v.textContent = k.victimName || "";
+        slot.v.className = k.victimTeam === "CT" ? "ct" : "t";
+      }
     }
 
     if (round && this.tick > round.endTick - tr * 2 && this.tick < round.endTick + tr * 3) {
@@ -759,6 +919,24 @@ export class ReplayViewer {
       this.bannerEl.textContent = `${who} · ${reason}`;
       this.bannerEl.hidden = false;
     } else this.bannerEl.hidden = true;
+  }
+
+  _isCt(steamid) {
+    const players = this._lastPlayers;
+    if (!players) return false;
+    for (let i = 0; i < players.length; i++) {
+      if (this.timeline.players[i]?.steamid === steamid) return players[i].team === 3;
+    }
+    return false;
+  }
+
+  _focusedPlayer() {
+    const players = this._lastPlayers;
+    if (!players) return null;
+    for (let i = 0; i < players.length; i++) {
+      if (this.timeline.players[i]?.steamid === this.focus) return players[i];
+    }
+    return players[0] || null;
   }
 
   _score() {

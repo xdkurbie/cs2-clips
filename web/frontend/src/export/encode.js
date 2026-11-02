@@ -1,4 +1,6 @@
 import { Muxer, ArrayBufferTarget } from "mp4-muxer";
+
+export const ENCODE_REV = 4;
 import { FILTERS } from "../api.js";
 
 function even(n) { return Math.max(2, n - (n % 2)); }
@@ -52,6 +54,18 @@ export async function encodeMp4({ canvas, fps = 30, frameCount, draw, filter = "
     return recordRealtime({ out, fps, frameCount, draw, paint });
   }
 
+  let audioOk = false;
+  if (audio && typeof AudioEncoder !== "undefined" && AudioEncoder.isConfigSupported) {
+    try {
+      const support = await AudioEncoder.isConfigSupported({
+        codec: "mp4a.40.2",
+        sampleRate: 48000,
+        numberOfChannels: 2,
+        bitrate: 128000,
+      });
+      audioOk = !!support.supported;
+    } catch { audioOk = false; }
+  }
   const target = new ArrayBufferTarget();
   const muxerOpts = {
     target,
@@ -59,22 +73,26 @@ export async function encodeMp4({ canvas, fps = 30, frameCount, draw, filter = "
     fastStart: "in-memory",
     firstTimestampBehavior: "offset",
   };
-  if (audio) muxerOpts.audio = { codec: "aac", numberOfChannels: 2, sampleRate: 48000 };
+  if (audioOk) muxerOpts.audio = { codec: "aac", numberOfChannels: 2, sampleRate: 48000 };
   const muxer = new Muxer(muxerOpts);
   const encoder = new VideoEncoder({
     output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
     error: (err) => { throw err; },
   });
-  encoder.configure({
-    codec: "avc1.420028",
+  const videoConfig = {
+    codec: "avc1.42001f",
     width,
     height,
-    bitrate: 2_400_000,
+    bitrate: 2_000_000,
     framerate: fps,
-    avc: { format: "avc" },
-  });
+  };
+  try {
+    encoder.configure({ ...videoConfig, avc: { format: "avc" } });
+  } catch {
+    encoder.configure(videoConfig);
+  }
 
-  if (audio && typeof AudioEncoder !== "undefined") {
+  if (audioOk) {
     const audioEncoder = new AudioEncoder({
       output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
       error: () => {},
@@ -107,9 +125,13 @@ export async function encodeMp4({ canvas, fps = 30, frameCount, draw, filter = "
     encoder.encode(frame, { keyFrame: i % 30 === 0 });
     frame.close();
     if (onProgress && i % 4 === 0) onProgress(i / frameCount);
-    if (i % 8 === 0) await new Promise((r) => setTimeout(r, 0));
+    while (encoder.encodeQueueSize > 8) await new Promise((r) => setTimeout(r, 4));
   }
-  await encoder.flush();
+  if (onProgress) onProgress(1);
+  await Promise.race([
+    encoder.flush(),
+    new Promise((resolve) => setTimeout(resolve, 8000)),
+  ]);
   muxer.finalize();
   return new Blob([target.buffer], { type: "video/mp4" });
 }

@@ -4,6 +4,7 @@ import Home from "./Home.jsx";
 import MatchView from "./MatchView.jsx";
 import Montage from "./Montage.jsx";
 import Me from "./Me.jsx";
+import Lab from "./Lab.jsx";
 import { API_BASE, getJSON, needsBackend, sendJSON } from "./api.js";
 
 function route() {
@@ -14,6 +15,7 @@ function route() {
   if (parts[0] === "m" && parts[1]) return { name: "match", id: parts[1], q };
   if (parts[0] === "montage") return { name: "montage", q };
   if (parts[0] === "me") return { name: "me", q };
+  if (parts[0] === "lab") return { name: "lab", q };
   return { name: "home", q };
 }
 
@@ -53,6 +55,7 @@ export default function App() {
       {where.name === "montage" ? <Montage i18n={i18n} /> : null}
       {where.name === "home" ? <Home i18n={i18n} /> : null}
       {where.name === "me" ? <Me i18n={i18n} /> : null}
+      {where.name === "lab" ? <Lab i18n={i18n} /> : null}
     </div>
   );
 }

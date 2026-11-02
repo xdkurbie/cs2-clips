@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "concurrently -n api,ui -c blue,yellow \"npm run dev -w backend\" \"npm run dev -w frontend\"",
     "start": "npm run build -w frontend && npm start -w backend",
-    "test": "npm test -w backend",
+    "test": "npm test -w backend && npm test -w frontend",
     "bot-login": "npm run bot-login -w backend"
   }
 }

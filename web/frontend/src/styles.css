@@ -67,6 +67,15 @@ button:not(.ghost):not(.tag):not(.prow):not(.chip):not(.hname) { background: var
 .tag:not(.ct) { border-color: var(--t); }
 .tag.dead { opacity: 0.45; }
 .clock { position: absolute; left: 12px; top: 12px; background: rgba(12,16,22,0.72); padding: 6px 10px; border-radius: 8px; font-variant-numeric: tabular-nums; }
+.crosshair { position: absolute; left: 50%; top: 50%; width: 14px; height: 14px; transform: translate(-50%, -50%); border: 1.5px solid rgba(243,239,230,0.92); border-radius: 50%; }
+.crosshair::before, .crosshair::after { content: ""; position: absolute; background: rgba(243,239,230,0.92); }
+.crosshair::before { left: 5px; top: -7px; width: 1.5px; height: 26px; }
+.crosshair::after { top: 5px; left: -7px; height: 1.5px; width: 26px; }
+.pov-gun { position: absolute; right: 16px; bottom: 14px; letter-spacing: 0.12em; text-transform: uppercase; font-size: 13px; text-shadow: 0 1px 2px #000; }
+.lab { display: grid; grid-template-columns: 1fr; gap: 12px; padding: 16px; min-height: 0; flex: 1; }
+.lab figure { margin: 0; display: flex; flex-direction: column; min-height: 520px; }
+.lab figure div { flex: 1; min-height: 360px; border-radius: 12px; overflow: hidden; }
+.lab figcaption { color: var(--muted); padding-top: 8px; }
 .feed { position: absolute; right: 12px; top: 12px; display: grid; gap: 4px; justify-items: end; }
 .feed div { background: rgba(12,16,22,0.82); border-radius: 6px; padding: 4px 8px; display: flex; gap: 8px; font-size: 13px; box-shadow: 0 4px 16px rgba(0,0,0,0.25); }
 .feed .ct { color: var(--ct); }

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { getJSON } from "./api.js";
 import { titleOf } from "./i18n.js";
 import { ReplayViewer, SPEEDS } from "./viewer/ReplayViewer.js";
+import { loadInstallMap, pickInstallDirectory, readCachedMap, sourceFromFileList } from "./source2/install.js";
 import { downloadBlob, encodeMp4, mixAudio } from "./export/encode.js";
 
 export default function MatchView({ id, q, i18n }) {
@@ -26,6 +27,8 @@ export default function MatchView({ id, q, i18n }) {
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [rounds, setRounds] = useState([]);
+  const fileRef = useRef(null);
+  const mapRef = useRef("");
 
   useEffect(() => {
     let dead = false;
@@ -40,6 +43,7 @@ export default function MatchView({ id, q, i18n }) {
         ]);
         if (dead) return;
         setMeta(metaBody);
+        mapRef.current = metaBody.map || "";
         setRounds(timeline.rounds || []);
         setHighs(highlightBody.highlights || []);
         const initialFocus = q.get("steamid") || metaBody.focus || timeline.players[0]?.steamid || "";
@@ -68,6 +72,8 @@ export default function MatchView({ id, q, i18n }) {
         await viewer.ensureRound(round?.number || 1);
         viewer.start();
         viewer.seek(tick);
+        const cached = await readCachedMap(metaBody.map);
+        if (!dead && cached) viewer.useInstall(cached);
       } catch (err) {
         if (!dead) setError(err.code || err.message || "load");
       }
@@ -78,6 +84,34 @@ export default function MatchView({ id, q, i18n }) {
   useEffect(() => { viewerRef.current?.setLabels(t); }, [t]);
 
   const shown = highs.filter((h) => (!who || h.steamid === who) && (kind === "all" || h.kind === kind || (kind === "multikill" && (h.kind === "multikill" || h.kind === "ace"))));
+
+  async function useInstall(source) {
+    const v = viewerRef.current;
+    if (!v || !source) return;
+    setError("");
+    setStatus(t.installReading);
+    try {
+      const built = await loadInstallMap(source, mapRef.current, {
+        low,
+        onProgress: () => setStatus(t.installReading),
+      });
+      v.useInstall(built);
+      setStatus(t.installReady);
+    } catch (err) {
+      setStatus("");
+      setError(t[err.message] || t.installFallback);
+    }
+  }
+
+  async function chooseInstall() {
+    try {
+      const source = await pickInstallDirectory();
+      await useInstall(source);
+    } catch (err) {
+      if (err?.name === "AbortError") return;
+      fileRef.current?.click();
+    }
+  }
 
   function playHighlight(h) {
     const v = viewerRef.current;
@@ -206,6 +240,8 @@ export default function MatchView({ id, q, i18n }) {
           <input type="number" min="0" max="8" value={padAfter} onChange={(e) => setPadAfter(Number(e.target.value))} />
         </label>
         <label className="check"><input type="checkbox" checked={low} onChange={(e) => { setLow(e.target.checked); localStorage.setItem("cs2clips.low", e.target.checked ? "1" : "0"); viewerRef.current?.setLow(e.target.checked); }} />{t.low}</label>
+        <button type="button" onClick={chooseInstall}>{t.useInstall}</button>
+        <input ref={fileRef} hidden type="file" webkitdirectory="" directory="" multiple onChange={(e) => { const files = e.target.files; if (files?.length) useInstall(sourceFromFileList(files)).catch((err) => setError(t[err.message] || t.installFallback)); }} />
         <button type="button" onClick={() => { navigator.clipboard?.writeText(location.href); setStatus(t.share); }}>{t.share}</button>
         {status ? <em>{status}</em> : null}
         {error ? <em className="err">{error}</em> : null}

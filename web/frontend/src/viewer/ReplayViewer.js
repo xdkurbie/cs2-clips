@@ -93,7 +93,10 @@ export class ReplayViewer {
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x1a2433);
-    this.scene.fog = new THREE.Fog(0x1a2433, 1800, 9000);
+    this.scene.fog = new THREE.Fog(0x1a2433, 700, 6200);
+    const fill = new THREE.DirectionalLight(0xc5d4e8, 0.35);
+    fill.position.set(-600, 400, -800);
+    this.scene.add(fill);
     this.scene.add(new THREE.HemisphereLight(0xe7eef8, 0x3a3228, 0.72));
     this.scene.add(new THREE.AmbientLight(0xffffff, 0.28));
     const sun = new THREE.DirectionalLight(0xfff6e8, 1.15);
@@ -116,6 +119,8 @@ export class ReplayViewer {
     const plants = (this.timeline.bomb || []).filter((b) => b.kind === "plant");
     const mesh = createBlockoutMesh(this.blockout, plants);
     this.scene.add(mesh.ground, mesh.floors, mesh.walls, createSiteMarkers(plants));
+    this._floors = mesh.floors;
+    this._walls = mesh.walls;
     this._mapMats = mesh.materials;
 
     const b = this.blockout?.bounds;
@@ -260,6 +265,13 @@ export class ReplayViewer {
     this.blindEl = document.createElement("div");
     this.blindEl.className = "blind";
     this.overlay.appendChild(this.blindEl);
+    this.crosshair = document.createElement("div");
+    this.crosshair.className = "crosshair";
+    this.crosshair.hidden = true;
+    this.overlay.appendChild(this.crosshair);
+    this.povGun = document.createElement("div");
+    this.povGun.className = "pov-gun";
+    this.overlay.appendChild(this.povGun);
     this._rings = [];
     for (let i = 1; i <= 24; i++) {
       this._rings.push(new THREE.RingGeometry(132, 146, 28, 1, Math.PI / 2, (i / 24) * Math.PI * 2));
@@ -373,6 +385,41 @@ export class ReplayViewer {
   setLow(low) {
     this.low = !!low;
     this.renderer.setPixelRatio(this.low ? 1 : Math.min(1.25, window.devicePixelRatio || 1));
+    this.persp.far = this.low ? 9000 : 40000;
+    this.persp.updateProjectionMatrix();
+    if (this.scene.fog) {
+      this.scene.fog.near = this.low ? 1600 : 700;
+      this.scene.fog.far = this.low ? 9000 : 6200;
+    }
+    this.cone.visible = !this.low;
+    if (this._detail) this._detail.visible = !this.low;
+    this.renderer.toneMappingExposure = this.low ? 1 : 1.18;
+  }
+
+  useInstall(built) {
+    if (!built?.group) return;
+    if (this._install) this.scene.remove(this._install);
+    this._install = built.group;
+    this._detail = built.detail;
+    if (this._detail) this._detail.visible = !this.low;
+    this.scene.add(built.group);
+    if (this._floors) this._floors.visible = false;
+    if (this._walls) this._walls.visible = false;
+    this._agentGeo = built.agents || {};
+    this._agentNodes?.forEach((node) => this.scene.remove(node));
+    this._agentNodes = [];
+    this._prev = [];
+    if (this._agentGeo.ct || this._agentGeo.t) {
+      for (let i = 0; i < this.n; i++) {
+        const mesh = new THREE.Mesh(this._agentGeo.ct || this._agentGeo.t, new THREE.MeshLambertMaterial());
+        mesh.frustumCulled = true;
+        mesh.visible = false;
+        this.scene.add(mesh);
+        this._agentNodes.push(mesh);
+      }
+      this.body.visible = false;
+      this.head.visible = false;
+    }
   }
 
   setSpeed(speed) { this.speed = speed; }
@@ -412,6 +459,8 @@ export class ReplayViewer {
     this.controls.enablePan = true;
     this.controls.object = top ? this.ortho : this.persp;
     if (this.viewmodel) this.viewmodel.visible = this.mode === "pov";
+    if (this.crosshair) this.crosshair.hidden = this.mode !== "pov";
+    if (this.povGun) this.povGun.hidden = this.mode !== "pov";
     if (this.mode === "orbit" && this._homePos) {
       this.persp.position.copy(this._homePos);
       this.controls.target.copy(this._homeTarget);
@@ -676,6 +725,21 @@ export class ReplayViewer {
       this.dummy.updateMatrix();
       this.cone.setMatrixAt(i, this.dummy.matrix);
       this.cone.setColorAt(i, color);
+      const agent = this._agentNodes?.[i];
+      if (agent) {
+        const geo = teamCt ? (this._agentGeo.ct || this._agentGeo.t) : (this._agentGeo.t || this._agentGeo.ct);
+        if (geo && agent.geometry !== geo) agent.geometry = geo;
+        agent.material.color.copy(color);
+        agent.visible = !hide && p.present;
+        const prev = this._prev[i];
+        const speed = prev ? Math.hypot(p.x - prev.x, p.y - prev.y) * (this.timeline.tickrate || 64) : 0;
+        this._prev[i] = { x: p.x, y: p.y };
+        const run = speed > 90;
+        agent.position.copy(this._pos);
+        agent.position.y += run ? Math.abs(Math.sin(this.tick * 0.45)) * 2.4 : Math.sin(this.tick * 0.08) * 0.35;
+        agent.rotation.set(run ? 0.12 : 0, (-p.yaw * Math.PI) / 180, 0);
+        agent.scale.set(hide ? 0.0001 : 1, hide ? 0.0001 : 1, hide ? 0.0001 : 1);
+      }
 
       const death = this.deaths[i];
       const age = p.alive ? 999 : (this.tick - this._deathAt[i]) / tr;
@@ -729,9 +793,16 @@ export class ReplayViewer {
         this._eye.y += 64;
         this._look.copy(this._eye).addScaledVector(this._fwd, 120);
         if (this._snap) this.persp.position.copy(this._eye);
-        else this.persp.position.lerp(this._eye, 0.65);
+        else this.persp.position.lerp(this._eye, 0.45);
         this.persp.up.set(0, 1, 0);
-        this.persp.lookAt(this._look);
+        this._aimMat ||= new THREE.Matrix4();
+        this._aimQuat ||= new THREE.Quaternion();
+        this._aimMat.lookAt(this.persp.position, this._look, UP);
+        this._aimQuat.setFromRotationMatrix(this._aimMat);
+        if (this._snap) this.persp.quaternion.copy(this._aimQuat);
+        else this.persp.quaternion.slerp(this._aimQuat, 0.35);
+        const gunName = weaponLabel(weapons[fp.weapon] || "");
+        if (this.povGun) this.povGun.textContent = gunName;
       } else {
         this._cam.copy(this._pos).addScaledVector(this._fwd, -260);
         this._cam.y += 130;

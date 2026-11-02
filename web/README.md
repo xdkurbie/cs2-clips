@@ -85,6 +85,8 @@ web/
   frontend/               Vite + three.js replay
 ```
 
+On a match, **Use my CS2 install** asks for the local `game/csgo` folder. The browser reads VPK archives and compiled meshes in a worker, keeps them in IndexedDB and OPFS, and does not upload them. Without that folder the viewer stays on the original stylized map. A limited account note for the friend bot is unchanged. Idle and run on a loaded agent mesh are whole-mesh poses from movement speed. The demo stream does not include a duck flag, so crouch is not inferred.
+
 A round file is `CS2R`, a version, a JSON header, then a gzip body of quantized positions (int16) and angles (uint8) at 32 Hz. The browser decodes it in a worker with `DecompressionStream` and prefetches the next round. Playback lerps positions and takes the shortest yaw arc. The service worker keeps the four most recent matches.
 
 ## Tests

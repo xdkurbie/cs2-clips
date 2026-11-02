@@ -1,0 +1,28 @@
+# Render Blueprint for the API and the built frontend together.
+# User auth codes are not stored. Set the secret env vars in the dashboard.
+services:
+  - type: web
+    name: cs2clips
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    envVars:
+      - key: STEAM_WEB_API_KEY
+        sync: false
+      - key: STEAM_BOT_REFRESH_TOKEN
+        sync: false
+      - key: STEAM_BOT_USERNAME
+        sync: false
+      - key: STEAM_BOT_PASSWORD
+        sync: false
+      - key: STEAM_BOT_SHARED_SECRET
+        sync: false
+      - key: DATA_DIR
+        value: /data
+      - key: CORS_ORIGIN
+        sync: false
+    disk:
+      name: cs2clips-data
+      mountPath: /data
+      sizeGB: 10

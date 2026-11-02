@@ -3,6 +3,8 @@
 
 <p align="center">🌐 <b>Website:</b> <a href="https://xdkurbie.github.io/cs2-clips/">xdkurbie.github.io/cs2-clips</a> — built in Rust (Leptos + WebAssembly), source in <a href="site/">site/</a></p>
 
+<p align="center">The browser replay lives in <a href="web/">web/</a> (<code>npm run dev</code>). It does not replace this desktop app or the GitHub Pages site.</p>
+
 <p align="center">Find your best Counter-Strike 2 moments in demos, record them through CS2's own demo player and cut them into a montage. Runs locally, written in Rust.</p>
 <p align="center">
   <a href="https://github.com/xdkurbie/cs2-clips/actions/workflows/ci.yml"><img src="https://github.com/xdkurbie/cs2-clips/actions/workflows/ci.yml/badge.svg" alt="CI"></a>

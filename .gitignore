@@ -3,3 +3,9 @@
 *.dem
 *.dem.bz2
 .DS_Store
+web/node_modules
+web/frontend/node_modules
+web/backend/node_modules
+web/frontend/dist
+web/data
+web/.env

@@ -1,0 +1,15 @@
+{
+  "name": "cs2clips-web",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Browser replay, highlights and montage for CS2 demos",
+  "workspaces": ["frontend", "backend"],
+  "devDependencies": { "concurrently": "^9.1.2" },
+  "scripts": {
+    "dev": "concurrently -n api,ui -c blue,yellow \"npm run dev -w backend\" \"npm run dev -w frontend\"",
+    "start": "npm run build -w frontend && npm start -w backend",
+    "test": "npm test -w backend",
+    "bot-login": "npm run bot-login -w backend"
+  }
+}
